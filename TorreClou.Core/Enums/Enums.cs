@@ -1,4 +1,4 @@
-namespace TorreClou.Core.Enums
+﻿namespace TorreClou.Core.Enums
 {
     public enum RegionCode { Global, US, EU, EG, SA, IN }
 
@@ -15,7 +15,13 @@ namespace TorreClou.Core.Enums
         Percentage,
         FixedAmount
     }
-
+    public enum DepositStatus
+    {
+        Pending,   // اليوزر لسه فاتح صفحة الدفع
+        Completed, // الفلوس وصلت وتأكدت
+        Failed,    // الفيزا اترفضا
+        Expired    // اللينك مدته انتهت
+    }
     public enum JobStatus { QUEUED, PROCESSING, UPLOADING, COMPLETED, FAILED, CANCELLED }
 
     public enum ViolationType

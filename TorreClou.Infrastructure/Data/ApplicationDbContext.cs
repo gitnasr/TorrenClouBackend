@@ -109,6 +109,14 @@ namespace TorreClou.Infrastructure.Data
                 .WithMany(u => u.Strikes)
                 .HasForeignKey(s => s.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+
+            builder.Entity<Deposit>()
+        .Property(d => d.Status)
+        .HasConversion<string>();
+
+            builder.Entity<Deposit>()
+                .HasIndex(d => d.GatewayTransactionId);
         }
     }
 }
