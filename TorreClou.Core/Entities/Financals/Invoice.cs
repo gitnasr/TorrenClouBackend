@@ -17,8 +17,9 @@ namespace TorreClou.Core.Entities.Financals
         public bool IsPaid { get; set; } = false;
         public bool IsRefunded { get; set; } = false;
 
-        public string? PaymentGatewayId { get; set; }
+        public string? WalletTransactionId { get; set; }
+        public WalletTransaction WalletTransaction { get; set; } = null!;
 
-        public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddSeconds(60);
+        public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddMinutes(15);
     }
 }

@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.9" />
+    <PackageReference Include="MonoTorrent" Version="3.0.2" />
   </ItemGroup>
 
   <ItemGroup>

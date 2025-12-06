@@ -27,5 +27,7 @@ namespace TorreClou.Core.Entities.Jobs
         public DateTime? CompletedAt { get; set; }
 
         public Invoice? Invoice { get; set; }
+
+        public int[] SelectedFileIndices { get; set; } = [];
     }
 }

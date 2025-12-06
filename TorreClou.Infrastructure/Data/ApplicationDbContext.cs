@@ -117,6 +117,10 @@ namespace TorreClou.Infrastructure.Data
 
             builder.Entity<Deposit>()
                 .HasIndex(d => d.GatewayTransactionId);
+
+            builder.Entity<UserJob>()
+                .Property(e => e.SelectedFileIndices)
+                .HasColumnType("integer[]");
         }
     }
 }
