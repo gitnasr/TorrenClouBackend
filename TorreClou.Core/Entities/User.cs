@@ -2,6 +2,7 @@ using TorreClou.Core.Enums;
 using TorreClou.Core.Entities.Financals;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Entities.Torrents;
+using TorreClou.Core.Entities.Compliance;
 
 namespace TorreClou.Core.Entities
 {
@@ -22,7 +23,8 @@ namespace TorreClou.Core.Entities
 
         public ICollection<WalletTransaction> WalletTransactions { get; set; } = [];
         public ICollection<UserJob> Jobs { get; set; } = [];
-        public ICollection<Compliance.UserStrike> Strikes { get; set; } = [];
+        public ICollection<UserStrike> Strikes { get; set; } = [];
+        public ICollection<TorrentFile> UploadedTorrentFiles { get; set; } = [];
 
         public decimal GetCurrentBalance() => WalletTransactions?.Sum(t => t.Amount) ?? 0;
     }

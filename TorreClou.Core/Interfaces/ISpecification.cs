@@ -5,20 +5,18 @@ using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace TorreClou.Core.Specifications
+namespace TorreClou.Core.Interfaces
 {
     public interface ISpecification<T>
     {
 
         Expression<Func<T, bool>> Criteria { get; }
 
-        // العلاقات: زي Include(x => x.User)
         List<Expression<Func<T, object>>> Includes { get; }
 
         Expression<Func<T, object>> OrderBy { get; }
         Expression<Func<T, object>> OrderByDescending { get; }
 
-        // الـ Pagination (اختياري، ممكن نضيفه بعدين)
         int Take { get; }
         int Skip { get; }
         bool IsPagingEnabled { get; }

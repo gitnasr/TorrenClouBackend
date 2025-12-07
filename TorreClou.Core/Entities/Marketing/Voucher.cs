@@ -1,4 +1,3 @@
-// MySaaS.Core/Entities/Voucher.cs
 using TorreClou.Core.Enums;
 
 namespace TorreClou.Core.Entities.Marketing

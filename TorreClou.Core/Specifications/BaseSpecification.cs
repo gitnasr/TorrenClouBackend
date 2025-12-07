@@ -1,4 +1,5 @@
 ﻿using System.Linq.Expressions;
+using TorreClou.Core.Interfaces;
 
 namespace TorreClou.Core.Specifications
 {

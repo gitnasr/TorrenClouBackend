@@ -26,7 +26,7 @@ namespace TorreClou.Infrastructure.Data
 
         public IGenericRepository<T> Repository<T>() where T : BaseEntity
         {
-            if (_repositories == null) _repositories = new Hashtable();
+            _repositories ??= new Hashtable();
 
             var type = typeof(T).Name;
 

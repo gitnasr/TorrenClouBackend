@@ -1,8 +1,11 @@
+using System.Threading.Tasks;
 using TorreClou.Core.DTOs.Torrents;
+using TorreClou.Core.Entities.Torrents;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
+using TorreClou.Core.Specifications;
 
-public class TorrentService(ITorrentParser parser) : ITorrentService
+public class TorrentService(ITorrentParser parser, IUnitOfWork unitOfWork) : ITorrentService
 {
 
 
@@ -22,5 +25,24 @@ public class TorrentService(ITorrentParser parser) : ITorrentService
             Name = info.Name,
             Files = info.Files 
         };
+    }
+
+    public async Task<Result<TorrentFile>> FindOrCreateTorrentFile(TorrentFile torrent)
+    {
+
+        var searchCriteria = new BaseSpecification<TorrentFile>(t => t.InfoHash == torrent.InfoHash && t.UploadedByUserId == torrent.UploadedByUserId);
+
+
+        var existingTorrent = await unitOfWork.Repository<TorrentFile>().GetEntityWithSpec(searchCriteria);
+
+        if (existingTorrent != null)
+        {
+            return Result.Success(existingTorrent);
+        }
+
+        unitOfWork.Repository<TorrentFile>().Add(torrent);
+        await unitOfWork.Complete();
+
+        return Result.Success(torrent);
     }
 }

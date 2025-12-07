@@ -5,16 +5,15 @@ namespace TorreClou.Application.Services
 {
     public interface IPricingEngine
     {
-        PricingSnapshot CalculatePrice(long sizeBytes, RegionCode region, int seeders, bool isCached);
+        PricingSnapshot CalculatePrice(long sizeBytes, RegionCode region, int seeders, bool isCached = false);
     }
 
     public class PricingEngine : IPricingEngine
     {
-        // الثوابت (ممكن تجيبها من AppSettings لاحقاً)
         private const decimal BASE_RATE_PER_GB = 0.20m;
         private const decimal MINIMUM_CHARGE = 0.20m;
 
-        public PricingSnapshot CalculatePrice(long sizeBytes, RegionCode region, int seeders, bool isCached)
+        public PricingSnapshot CalculatePrice(long sizeBytes, RegionCode region, int seeders, bool isCached = false)
         {
             var snapshot = new PricingSnapshot
             {

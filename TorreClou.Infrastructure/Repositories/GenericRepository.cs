@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using MySaaS.Infrastructure.Data;
 using TorreClou.Core.Entities;
 using TorreClou.Core.Interfaces;
-using TorreClou.Core.Specifications;
 using TorreClou.Infrastructure.Data;
 
 namespace TorreClou.Infrastructure.Repositories

@@ -1,10 +1,10 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using TorreClou.Core.Entities;
-using TorreClou.Core.Specifications;
+using TorreClou.Core.Interfaces;
 
 namespace MySaaS.Infrastructure.Data
 {
-    public class SpecificationEvaluator<TEntity> where TEntity : BaseEntity
+    public sealed class SpecificationEvaluator<TEntity> where TEntity : BaseEntity
     {
         public static IQueryable<TEntity> GetQuery(IQueryable<TEntity> inputQuery, ISpecification<TEntity> spec)
         {

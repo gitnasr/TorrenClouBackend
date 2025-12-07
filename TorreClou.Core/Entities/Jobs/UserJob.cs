@@ -11,8 +11,8 @@ namespace TorreClou.Core.Entities.Jobs
         public int UserId { get; set; }
         public User User { get; set; } = null!;
 
-        public int CachedTorrentId { get; set; }
-        public CachedTorrent CachedTorrent { get; set; } = null!;
+        public int TorrentFileId { get; set; }
+        public TorrentFile TorrentFile { get; set; } = null!;
 
         public int StorageProfileId { get; set; }
         public UserStorageProfile StorageProfile { get; set; } = null!;

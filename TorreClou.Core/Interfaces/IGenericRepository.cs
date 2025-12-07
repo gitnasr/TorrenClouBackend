@@ -1,6 +1,5 @@
 using TorreClou.Core.Entities;
 using System.Linq.Expressions;
-using TorreClou.Core.Specifications;
 
 namespace TorreClou.Core.Interfaces
 {
