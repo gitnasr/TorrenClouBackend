@@ -8,6 +8,7 @@ namespace TorreClou.Core.DTOs.Torrents
 
         public List<TorrentFileDto> Files { get; init; } = new();
         public List<string> Trackers { get; init; } = new();
+        public ScrapeAggregationResult ScrapeResult { get; init; } = new();
     }
 
     public record TorrentFileDto

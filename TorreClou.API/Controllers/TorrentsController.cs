@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
-using TorreClou.Application.Services;
 using TorreClou.Core.DTOs.Financal;
 using TorreClou.Core.DTOs.Torrents;
 using TorreClou.Core.Interfaces;
@@ -10,7 +9,7 @@ namespace TorreClou.API.Controllers
 {
     [Route("api/torrents")]
     public class TorrentsController(
-        IQuoteService quoteService,
+        ITorrentQuoteService quoteService,
         ITorrentService torrentService
     ) : BaseApiController
     {
@@ -21,7 +20,7 @@ namespace TorreClou.API.Controllers
         {
             if (file == null || file.Length == 0) return BadRequest("No file uploaded.");
             using var stream = file.OpenReadStream();
-            var result =  torrentService.GetTorrentInfoFromTorrentFile(stream);
+            var result = await  torrentService.GetTorrentInfoFromTorrentFileAsync(stream);
             return HandleResult(result);
         }
 

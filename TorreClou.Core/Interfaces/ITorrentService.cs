@@ -7,8 +7,7 @@ namespace TorreClou.Core.Interfaces
 
     public interface ITorrentService
     {
-        Result<TorrentInfoDto> GetTorrentInfoFromTorrentFile(Stream fileStream);
-        Task<Result<TorrentFile>> FindOrCreateTorrentFile(TorrentFile torrent);
+        Task<Result<TorrentInfoDto>> GetTorrentInfoFromTorrentFileAsync(Stream fileStream);        Task<Result<TorrentFile>> FindOrCreateTorrentFile(TorrentFile torrent);
     }
 
 

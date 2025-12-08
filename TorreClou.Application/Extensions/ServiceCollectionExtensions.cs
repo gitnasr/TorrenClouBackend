@@ -13,12 +13,13 @@ namespace TorreClou.Application.Extensions
             services.AddScoped<IPaymentBusinessService, PaymentBusinessService>();
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IWalletService, WalletService>();
-            services.AddScoped<IQuoteService, QuoteService>();
+            services.AddScoped<ITorrentQuoteService, TorrentQuoteService>();
             services.AddScoped<ITrackerScraper, UdpTrackerScraper>();
             services.AddScoped<ITorrentService, TorrentService>();
             services.AddScoped<IVoucherService, VoucherService>();
             services.AddScoped<IPricingEngine, PricingEngine>();
             services.AddScoped<ITorrentHealthService, TorrentHealthService>();
+            services.AddScoped<IQuotePricingService, QuotePricingService>();
 
             return services;
         }

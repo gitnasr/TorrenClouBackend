@@ -1,15 +1,17 @@
+using MonoTorrent;
 using TorreClou.Core.DTOs.Torrents;
 using TorreClou.Core.Entities.Torrents;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
+using TorrentFile = TorreClou.Core.Entities.Torrents.TorrentFile;
 
 namespace TorreClou.Application.Services.Torrent
 {
-    public class TorrentService(IUnitOfWork unitOfWork) : ITorrentService
+    public class TorrentService(IUnitOfWork unitOfWork, ITrackerScraper trackerScraper) : ITorrentService
     {
 
-        public Result<TorrentInfoDto> GetTorrentInfoFromTorrentFile(Stream fileStream)
+        public async Task<Result<TorrentInfoDto>> GetTorrentInfoFromTorrentFileAsync(Stream fileStream)
         {
             try
             {
@@ -57,7 +59,10 @@ namespace TorreClou.Application.Services.Torrent
                         "udp://exodus.desync.com:6969/announce"
                     });
                 }
-
+                var scrape = await trackerScraper.GetScrapeResultsAsync(
+              hash,
+              trackers
+          );
                 // ----- Build DTO -----
                 var dto = new TorrentInfoDto
                 {
@@ -71,6 +76,7 @@ namespace TorreClou.Application.Services.Torrent
                         Path = f.Path,
                         Size = f.Length
                     }).ToList(),
+                    ScrapeResult =scrape
                   
                 };
 
