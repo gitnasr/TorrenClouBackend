@@ -7,8 +7,8 @@ public class ActiveInvoiceByTorrentAndUserSpec : BaseSpecification<Invoice>
         : base(i =>
             i.TorrentFile.InfoHash == infoHash &&
             i.UserId == userId &&
-            !i.IsPaid &&
-            !i.IsRefunded 
+            i.PaidAt != null &&
+            i.RefundedAt != null 
         )
     {
         AddOrderByDescending(i => i.CreatedAt);
