@@ -162,11 +162,7 @@ namespace TorreClou.Application.Services
             // توحيد الداتا جوه الـ snapshot
             newSnapshot.SelectedFiles = request.SelectedFileIndices?.ToList() ?? [];
             newSnapshot.TotalSizeInBytes = totalSizeInBytes;
-            newSnapshot.SelectedFilesInBytes = request.SelectedFileIndices != null
-                ? torrentInfo.Files
-                    .Where(f => request.SelectedFileIndices.Contains(f.Index))
-                    .Sum(f => f.Size)
-                : torrentInfo.TotalSize;
+
 
             // 4) Try to reuse existing invoice
             var existingInvoiceResult = await FindInvoiceByTorrentAndUserId(torrentInfo.InfoHash, userId);
