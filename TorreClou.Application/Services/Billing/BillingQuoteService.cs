@@ -107,7 +107,7 @@ namespace TorreClou.Application.Services
             var invoice = await unitOfWork.Repository<Invoice>().GetEntityWithSpec(PayInvoiceSepc);
             if (invoice == null)
                 return Result<InvoicePaymentResult>.Failure("INVOICE_NOT_FOUND", "Invoice not found.");
-            if (invoice.IsExpired || invoice.IsPaid || invoice.IsRefunded)
+            if (invoice.IsExpired || invoice.PaidAt != null || invoice.RefundedAt != null)
                 return Result<InvoicePaymentResult>.Failure("INVOICE_INVALID", "Invoice is not valid for payment.");
 
             // Check Balance 
@@ -129,7 +129,7 @@ namespace TorreClou.Application.Services
                 return Result<InvoicePaymentResult>.Failure(deductResult.Error);
 
             // Mark Invoice as Paid
-            invoice.IsPaid = true;
+            invoice.PaidAt = DateTime.UtcNow;
             invoice.WalletTransactionId = deductResult.Value;
             await unitOfWork.Complete();
             // FIRE EVENT TO START THE JOB

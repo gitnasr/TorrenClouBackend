@@ -25,8 +25,8 @@ public class Invoice : BaseEntity
 
     public string PricingSnapshotJson { get; set; } = "{}";
 
-    public bool IsPaid { get; set; } = false;
-    public bool IsRefunded { get; set; } = false;
+    public DateTime? PaidAt { get; set; } = null;
+    public DateTime? RefundedAt { get; set; } = null;
 
     public int? WalletTransactionId { get; set; }
     public WalletTransaction? WalletTransaction { get; set; }
