@@ -141,21 +141,32 @@ namespace TorreClou.Application.Services
             long totalSizeInBytes = totalSizeResult.Value;
 
             var user = await unitOfWork.Repository<User>().GetByIdAsync(userId);
+
+
+            if (user == null)
+                return Result<QuoteResponseDto>.Failure("USER_NOT_FOUND", "User not found.");
+
             var scrape = await trackerScraper.GetScrapeResultsAsync(
                 torrentInfo.InfoHash,
                 torrentInfo.Trackers
             );
             var health = torrentHealthService.Compute(scrape);
-
+            var healthMultiplier = 1 + (1 - health.HealthScore);
             // 3) New snapshot for current request
             var newSnapshot = pricingEngine.CalculatePrice(
                 totalSizeInBytes,
                 user.Region,
-                1 + (1 - health.HealthScore)
+               healthMultiplier
             );
 
             // توحيد الداتا جوه الـ snapshot
-            newSnapshot.SelectedFiles = request.SelectedFileIndices?.ToList() ?? new List<int>();
+            newSnapshot.SelectedFiles = request.SelectedFileIndices?.ToList() ?? [];
+            newSnapshot.TotalSizeInBytes = totalSizeInBytes;
+            newSnapshot.SelectedFilesInBytes = request.SelectedFileIndices != null
+                ? torrentInfo.Files
+                    .Where(f => request.SelectedFileIndices.Contains(f.Index))
+                    .Sum(f => f.Size)
+                : torrentInfo.TotalSize;
 
             // 4) Try to reuse existing invoice
             var existingInvoiceResult = await FindInvoiceByTorrentAndUserId(torrentInfo.InfoHash, userId);

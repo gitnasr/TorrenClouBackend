@@ -3,6 +3,8 @@ namespace TorreClou.Core.Models.Pricing
     public class PricingSnapshot
     {
         public long TotalSizeInBytes { get; set; }
+        public double TotalSizeInGb => TotalSizeInBytes / 1_073_741_824.0;
+
 
         public List<int> SelectedFiles { get; set; } = new();
 
