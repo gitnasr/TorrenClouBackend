@@ -1,15 +1,11 @@
 using System.Text.Json;
-using MonoTorrent;
 using TorreClou.Core.DTOs.Financal;
 using TorreClou.Core.DTOs.Torrents;
 using TorreClou.Core.Entities;
-using TorreClou.Core.Entities.Financals;
 using TorreClou.Core.Entities.Marketing;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Models.Pricing;
 using TorreClou.Core.Shared;
-using TorreClou.Core.Specifications;
-using TorreClou.Core.Entities.Torrents;
 using TorrentFile = TorreClou.Core.Entities.Torrents.TorrentFile;
 
 namespace TorreClou.Application.Services
