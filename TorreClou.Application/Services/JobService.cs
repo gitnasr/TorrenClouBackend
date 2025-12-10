@@ -52,6 +52,7 @@ namespace TorreClou.Application.Services
                 UserId = userId,
                 StorageProfileId = defaultStorageProfile?.Id ?? 0,
                 Status = JobStatus.QUEUED,
+                Type = JobType.Torrent,
                 RequestFileId = invoice.TorrentFileId,
                 SelectedFileIndices = selectedFileIndices
             };
@@ -68,6 +69,7 @@ namespace TorreClou.Application.Services
             await db.StreamAddAsync(JobStreamKey, [
                 new NameValueEntry("jobId", job.Id.ToString()),
                 new NameValueEntry("userId", userId.ToString()),
+                new NameValueEntry("jobType", job.Type.ToString()),
                 new NameValueEntry("createdAt", DateTime.UtcNow.ToString("O"))
             ]);
 

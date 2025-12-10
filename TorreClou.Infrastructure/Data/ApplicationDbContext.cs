@@ -61,6 +61,10 @@ namespace TorreClou.Infrastructure.Data
                 .Property(j => j.Status)
                 .HasConversion<string>();
 
+            builder.Entity<UserJob>()
+                .Property(j => j.Type)
+                .HasConversion<string>();
+
             // --- Invoice Configuration ---
             builder.Entity<Invoice>()
                 .Property(i => i.PricingSnapshotJson)

@@ -26,6 +26,8 @@
     }
     public enum JobStatus { QUEUED, PROCESSING, UPLOADING, COMPLETED, FAILED, CANCELLED }
 
+    public enum JobType { Torrent, Other }
+
     public enum ViolationType
     {
         Spam,
