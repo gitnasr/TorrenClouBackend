@@ -197,12 +197,9 @@ namespace TorreClou.Worker.Services
                 AutoSaveLoadFastResume = true,  // Enable FastResume for crash recovery
                 CacheDirectory = downloadPath,   // Store .fresume files alongside downloads
                 
-                // Performance settings - CRITICAL for download speed
-                MaximumConnections = 200,        // Global max connections (default is often 50-100)
+                 MaximumConnections = 200,        // Global max connections (default is often 50-100)
                 
-                // Port settings - use random port for flexibility
-                
-                // Allow port forwarding for better connectivity
+        
                 AllowPortForwarding = true
             }.ToSettings();
 
@@ -343,6 +340,24 @@ namespace TorreClou.Worker.Services
 
             try
             {
+                // Remove the FastResume file as it's no longer needed
+                var cacheFile = Path.Combine(job.DownloadPath!, $"dht_nodes.cache");
+                var fresumeFile = Path.Combine(job.DownloadPath!, $"fastresume");
+                if (File.Exists(fresumeFile))
+                {
+                    File.Delete(fresumeFile);
+                    Logger.LogInformation("{LogPrefix} Deleted FastResume file | JobId: {JobId} | File: {File}", 
+                        LogPrefix, job.Id, fresumeFile);
+                }
+
+
+                if (File.Exists(cacheFile))
+                {
+                    File.Delete(cacheFile);
+                    Logger.LogInformation("{LogPrefix} Deleted DHT cache file | JobId: {JobId} | File: {File}", 
+                        LogPrefix, job.Id, cacheFile);
+                }
+
                 await db.StreamAddAsync(streamKey, [
                     new NameValueEntry("jobId", job.Id.ToString()),
                     new NameValueEntry("downloadPath", job.DownloadPath ?? string.Empty),

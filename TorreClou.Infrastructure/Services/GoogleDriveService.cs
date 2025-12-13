@@ -154,11 +154,7 @@ namespace TorreClou.Infrastructure.Services
         {
             try
             {
-                // #region agent log
-                var logPath = Path.Combine(Directory.GetCurrentDirectory(), ".cursor", "debug.log");
-                var logEntry1 = System.Text.Json.JsonSerializer.Serialize(new { sessionId = "debug-session", runId = "run1", hypothesisId = "A", location = "GoogleDriveService.cs:157", message = "UploadFileAsync entry", data = new { filePath, fileName, folderId, fileExists = File.Exists(filePath) }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
-                File.AppendAllText(logPath, logEntry1 + Environment.NewLine);
-                // #endregion
+              
 
                 if (!File.Exists(filePath))
                 {
@@ -179,56 +175,33 @@ namespace TorreClou.Infrastructure.Services
                 var metadataJson = JsonSerializer.Serialize(metadata);
                 var metadataContent = new StringContent(metadataJson, Encoding.UTF8, "application/json");
 
-                // #region agent log
-                var fileInfo = new FileInfo(filePath);
-                var logEntry2 = System.Text.Json.JsonSerializer.Serialize(new { sessionId = "debug-session", runId = "run1", hypothesisId = "E", location = "GoogleDriveService.cs:175", message = "Before multipart creation", data = new { fileName, fileNameLength = fileName?.Length, fileNameHasSpecialChars = fileName != null && fileName.Any(c => !char.IsLetterOrDigit(c) && c != '.' && c != '-' && c != '_'), metadataJson, fileSize = fileInfo.Length, fileStreamCanRead = true }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
-                File.AppendAllText(logPath, logEntry2 + Environment.NewLine);
-                // #endregion
+               
 
                 // Step 2: Upload file using multipart upload
                 using var fileStream = File.OpenRead(filePath);
                 
-                // #region agent log
-                var logEntry3 = System.Text.Json.JsonSerializer.Serialize(new { sessionId = "debug-session", runId = "run1", hypothesisId = "D", location = "GoogleDriveService.cs:180", message = "File stream opened", data = new { streamLength = fileStream.Length, streamPosition = fileStream.Position, streamCanRead = fileStream.CanRead, streamCanSeek = fileStream.CanSeek }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
-                File.AppendAllText(logPath, logEntry3 + Environment.NewLine);
-                // #endregion
+               
 
                 using var multipartContent = new MultipartFormDataContent();
                 multipartContent.Add(metadataContent, "metadata");
                 var streamContent = new StreamContent(fileStream);
                 multipartContent.Add(streamContent, "file", fileName);
 
-                // #region agent log
-                var boundary = multipartContent.Headers.ContentType?.Parameters?.FirstOrDefault(p => p.Name == "boundary")?.Value;
-                var contentType = multipartContent.Headers.ContentType?.ToString();
-                var metadataHeaders = metadataContent.Headers.ToString();
-                var fileHeaders = streamContent.Headers.ToString();
-                var logEntry4 = System.Text.Json.JsonSerializer.Serialize(new { sessionId = "debug-session", runId = "run1", hypothesisId = "A", location = "GoogleDriveService.cs:186", message = "Multipart content created", data = new { boundary, contentType, metadataHeaders, fileHeaders, partsCount = multipartContent.Count() }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
-                File.AppendAllText(logPath, logEntry4 + Environment.NewLine);
-                // #endregion
+            
 
-                // #region agent log
-                var logEntry5 = System.Text.Json.JsonSerializer.Serialize(new { sessionId = "debug-session", runId = "run1", hypothesisId = "B", location = "GoogleDriveService.cs:188", message = "Before HTTP request", data = new { streamPositionBeforeRequest = fileStream.Position, streamLength = fileStream.Length }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
-                File.AppendAllText(logPath, logEntry5 + Environment.NewLine);
-                // #endregion
+             
 
                 var response = await httpClient.PostAsync(
                     "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name",
                     multipartContent,
                     cancellationToken);
 
-                // #region agent log
-                var logEntry6 = System.Text.Json.JsonSerializer.Serialize(new { sessionId = "debug-session", runId = "run1", hypothesisId = "D", location = "GoogleDriveService.cs:195", message = "After HTTP request", data = new { statusCode = (int)response.StatusCode, isSuccess = response.IsSuccessStatusCode, streamCanRead = fileStream.CanRead }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
-                File.AppendAllText(logPath, logEntry6 + Environment.NewLine);
-                // #endregion
+        
 
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                    // #region agent log
-                    var logEntry7 = System.Text.Json.JsonSerializer.Serialize(new { sessionId = "debug-session", runId = "run1", hypothesisId = "A", location = "GoogleDriveService.cs:200", message = "Upload failed", data = new { statusCode = (int)response.StatusCode, errorContent, responseHeaders = response.Headers.ToString() }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
-                    File.AppendAllText(logPath, logEntry7 + Environment.NewLine);
-                    // #endregion
+                
                     _logger.LogError("File upload failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
                     return Result<string>.Failure("UPLOAD_FAILED", $"Failed to upload file: {errorContent}");
                 }
