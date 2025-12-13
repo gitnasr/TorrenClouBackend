@@ -3,16 +3,12 @@ using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Interfaces;
 using TorreClou.Infrastructure.Workers;
 using TorreClou.GoogleDrive.Worker.Services;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.DependencyInjection;
 using Hangfire;
 using TorreClou.Core.Enums;
 
 namespace TorreClou.GoogleDrive.Worker
 {
-    /// <summary>
-    /// Redis stream consumer that listens for Google Drive upload jobs and enqueues them to Hangfire.
-    /// </summary>
+
     public class GoogleDriveWorker(
         ILogger<GoogleDriveWorker> logger,
         IConnectionMultiplexer redis,

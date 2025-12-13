@@ -4,33 +4,23 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using TorreClou.Core.DTOs.Storage.GoogleDrive;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Options;
 using TorreClou.Core.Shared;
 
 namespace TorreClou.Infrastructure.Services
 {
-    public class GoogleDriveService : IGoogleDriveService
+    public partial class GoogleDriveService(
+        IOptions<GoogleDriveSettings> settings,
+        IHttpClientFactory httpClientFactory,
+        ILogger<GoogleDriveService> logger,
+        IUploadProgressContext progressContext) : IGoogleDriveService
     {
-        private readonly GoogleDriveSettings _settings;
-        private readonly IHttpClientFactory _httpClientFactory;
-        private readonly ILogger<GoogleDriveService> _logger;
-        private readonly IUploadProgressContext _progressContext;
+        private readonly GoogleDriveSettings _settings = settings.Value;
 
         // Upload chunk size: 10 MB (must be multiple of 256 KB per Google's requirements)
         private const int ChunkSize = 10 * 1024 * 1024;
-
-        public GoogleDriveService(
-            IOptions<GoogleDriveSettings> settings,
-            IHttpClientFactory httpClientFactory,
-            ILogger<GoogleDriveService> logger,
-            IUploadProgressContext progressContext)
-        {
-            _settings = settings.Value;
-            _httpClientFactory = httpClientFactory;
-            _logger = logger;
-            _progressContext = progressContext;
-        }
 
         public async Task<Result<string>> GetAccessTokenAsync(string credentialsJson, CancellationToken cancellationToken = default)
         {
@@ -67,7 +57,7 @@ namespace TorreClou.Infrastructure.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error getting access token from credentials");
+                logger.LogError(ex, "Error getting access token from credentials");
                 return Result<string>.Failure("TOKEN_ERROR", "Failed to get access token");
             }
         }
@@ -76,7 +66,7 @@ namespace TorreClou.Infrastructure.Services
         {
             try
             {
-                var httpClient = _httpClientFactory.CreateClient();
+                var httpClient = httpClientFactory.CreateClient();
                 var requestBody = new Dictionary<string, string>
                 {
                     { "client_id", _settings.ClientId },
@@ -91,7 +81,7 @@ namespace TorreClou.Infrastructure.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                    _logger.LogError("Token refresh failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                    logger.LogError("Token refresh failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
                     return Result<string>.Failure("REFRESH_FAILED", "Failed to refresh access token");
                 }
 
@@ -107,7 +97,7 @@ namespace TorreClou.Infrastructure.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Exception during token refresh");
+                logger.LogError(ex, "Exception during token refresh");
                 return Result<string>.Failure("REFRESH_ERROR", "Error refreshing access token");
             }
         }
@@ -116,14 +106,14 @@ namespace TorreClou.Infrastructure.Services
         {
             try
             {
-                var httpClient = _httpClientFactory.CreateClient();
+                var httpClient = httpClientFactory.CreateClient();
                 httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
                 var folderMetadata = new
                 {
                     name = folderName,
                     mimeType = "application/vnd.google-apps.folder",
-                    parents = !string.IsNullOrEmpty(parentFolderId) ? new[] { parentFolderId } : Array.Empty<string>()
+                    parents = !string.IsNullOrEmpty(parentFolderId) ? [parentFolderId] : Array.Empty<string>()
                 };
 
                 var json = JsonSerializer.Serialize(folderMetadata);
@@ -137,7 +127,7 @@ namespace TorreClou.Infrastructure.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                    _logger.LogError("Folder creation failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                    logger.LogError("Folder creation failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
                     return Result<string>.Failure("FOLDER_CREATE_FAILED", $"Failed to create folder: {errorContent}");
                 }
 
@@ -153,7 +143,7 @@ namespace TorreClou.Infrastructure.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Exception creating folder: {FolderName}", folderName);
+                logger.LogError(ex, "Exception creating folder: {FolderName}", folderName);
                 return Result<string>.Failure("FOLDER_CREATE_ERROR", "Error creating folder");
             }
         }
@@ -179,9 +169,9 @@ namespace TorreClou.Infrastructure.Services
                 string? resumeUri = null;
                 long startByte = 0;
 
-                if (_progressContext.IsConfigured)
+                if (progressContext.IsConfigured)
                 {
-                    resumeUri = await _progressContext.GetResumeUriAsync(relativePath);
+                    resumeUri = await progressContext.GetResumeUriAsync(relativePath);
                 }
 
                 if (!string.IsNullOrEmpty(resumeUri))
@@ -191,16 +181,16 @@ namespace TorreClou.Infrastructure.Services
                     if (statusResult.IsSuccess)
                     {
                         startByte = statusResult.Value;
-                        _logger.LogInformation("Resuming upload from byte {StartByte} | File: {FileName}", startByte, fileName);
+                        logger.LogInformation("Resuming upload from byte {StartByte} | File: {FileName}", startByte, fileName);
                     }
                     else
                     {
                         // Resume URI invalid, start fresh
-                        _logger.LogWarning("Resume URI invalid, starting fresh upload | File: {FileName}", fileName);
+                        logger.LogCritical("Resume URI invalid, starting fresh upload | File: {FileName}", fileName);
                         resumeUri = null;
-                        if (_progressContext.IsConfigured)
+                        if (progressContext.IsConfigured)
                         {
-                            await _progressContext.ClearResumeUriAsync(relativePath);
+                            await progressContext.ClearResumeUriAsync(relativePath);
                         }
                     }
                 }
@@ -216,9 +206,9 @@ namespace TorreClou.Infrastructure.Services
                     resumeUri = initResult.Value;
 
                     // Cache the resume URI
-                    if (_progressContext.IsConfigured)
+                    if (progressContext.IsConfigured)
                     {
-                        await _progressContext.SetResumeUriAsync(relativePath, resumeUri);
+                        await progressContext.SetResumeUriAsync(relativePath, resumeUri);
                     }
                 }
 
@@ -226,17 +216,17 @@ namespace TorreClou.Infrastructure.Services
                 var uploadResult = await UploadFileChunkedAsync(
                     filePath, fileName, fileSize, resumeUri, startByte, contentType, accessToken, cancellationToken);
 
-                if (uploadResult.IsSuccess && _progressContext.IsConfigured)
+                if (uploadResult.IsSuccess && progressContext.IsConfigured)
                 {
                     // Clear resume URI on success
-                    await _progressContext.ClearResumeUriAsync(relativePath);
+                    await progressContext.ClearResumeUriAsync(relativePath);
                 }
 
                 return uploadResult;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Exception uploading file: {FileName}", fileName);
+                logger.LogError(ex, "Exception uploading file: {FileName}", fileName);
                 return Result<string>.Failure("UPLOAD_ERROR", ex.Message);
             }
         }
@@ -249,7 +239,7 @@ namespace TorreClou.Infrastructure.Services
             string accessToken,
             CancellationToken cancellationToken)
         {
-            var httpClient = _httpClientFactory.CreateClient();
+            var httpClient = httpClientFactory.CreateClient();
             httpClient.Timeout = TimeSpan.FromMinutes(5);
 
             var initiateUrl = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name";
@@ -267,7 +257,7 @@ namespace TorreClou.Infrastructure.Services
             if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogError("Failed to initiate resumable upload: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                logger.LogError("Failed to initiate resumable upload: {StatusCode} - {Error}", response.StatusCode, errorContent);
                 return Result<string>.Failure("INIT_FAILED", $"Failed to initiate upload: {errorContent}");
             }
 
@@ -277,7 +267,7 @@ namespace TorreClou.Infrastructure.Services
                 return Result<string>.Failure("INIT_FAILED", "No upload URI returned");
             }
 
-            _logger.LogDebug("Initiated resumable upload | URI: {Uri}", uploadUri);
+            logger.LogDebug("Initiated resumable upload | URI: {Uri}", uploadUri);
             return Result.Success(uploadUri);
         }
 
@@ -289,12 +279,12 @@ namespace TorreClou.Infrastructure.Services
         {
             try
             {
-                var httpClient = _httpClientFactory.CreateClient();
+                var httpClient = httpClientFactory.CreateClient();
                 httpClient.Timeout = TimeSpan.FromMinutes(1);
 
                 var request = new HttpRequestMessage(HttpMethod.Put, resumeUri);
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                request.Content = new ByteArrayContent(Array.Empty<byte>());
+                request.Content = new ByteArrayContent([]);
                 request.Content.Headers.ContentRange = new ContentRangeHeaderValue(fileSize) { Unit = "bytes" };
                 // Format: "bytes */total"
 
@@ -329,7 +319,7 @@ namespace TorreClou.Infrastructure.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to query upload status");
+                logger.LogWarning(ex, "Failed to query upload status");
                 return Result<long>.Failure("STATUS_QUERY_ERROR", ex.Message);
             }
         }
@@ -344,7 +334,7 @@ namespace TorreClou.Infrastructure.Services
             string accessToken,
             CancellationToken cancellationToken)
         {
-            var httpClient = _httpClientFactory.CreateClient();
+            var httpClient = httpClientFactory.CreateClient();
             httpClient.Timeout = TimeSpan.FromHours(2);
 
             await using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -389,12 +379,12 @@ namespace TorreClou.Infrastructure.Services
                     var driveFile = JsonSerializer.Deserialize<FileUploadResponse>(responseJson);
 
                     // Report final progress
-                    if (_progressContext.IsConfigured)
+                    if (progressContext.IsConfigured)
                     {
-                        await _progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
+                        await progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
                     }
 
-                    _logger.LogInformation("Upload complete | File: {FileName} | DriveFileId: {FileId}", fileName, driveFile?.Id);
+                    logger.LogInformation("Upload complete | File: {FileName} | DriveFileId: {FileId}", fileName, driveFile?.Id);
                     return Result.Success(driveFile?.Id ?? "");
                 }
 
@@ -403,15 +393,15 @@ namespace TorreClou.Infrastructure.Services
                     currentPosition += bytesRead;
 
                     // Report progress
-                    if (_progressContext.IsConfigured)
+                    if (progressContext.IsConfigured)
                     {
-                        await _progressContext.ReportProgressAsync(fileName, currentPosition, fileSize);
+                        await progressContext.ReportProgressAsync(fileName, currentPosition, fileSize);
                     }
 
                     // If all bytes have been sent but we still got 308, finalize the upload
                     if (currentPosition >= fileSize)
                     {
-                        _logger.LogInformation("All bytes sent, finalizing upload | File: {FileName}", fileName);
+                        logger.LogInformation("All bytes sent, finalizing upload | File: {FileName}", fileName);
                         // Make a final PUT request with Content-Range query format to finalize and get file ID
                         var finalRequest = new HttpRequestMessage(HttpMethod.Put, resumeUri);
                         finalRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
@@ -427,17 +417,17 @@ namespace TorreClou.Infrastructure.Services
                             var driveFile = JsonSerializer.Deserialize<FileUploadResponse>(responseJson);
 
                             // Report final progress
-                            if (_progressContext.IsConfigured)
+                            if (progressContext.IsConfigured)
                             {
-                                await _progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
+                                await progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
                             }
 
-                            _logger.LogInformation("Upload complete (finalized after 308) | File: {FileName} | DriveFileId: {FileId}", fileName, driveFile?.Id);
+                            logger.LogInformation("Upload complete (finalized after 308) | File: {FileName} | DriveFileId: {FileId}", fileName, driveFile?.Id);
                             return Result.Success(driveFile?.Id ?? "");
                         }
                         else
                         {
-                            _logger.LogWarning("Finalization request failed: {StatusCode} | File: {FileName}", finalResponse.StatusCode, fileName);
+                            logger.LogWarning("Finalization request failed: {StatusCode} | File: {FileName}", finalResponse.StatusCode, fileName);
                             // Fall through to post-loop check
                         }
                     }
@@ -445,7 +435,7 @@ namespace TorreClou.Infrastructure.Services
                 else
                 {
                     var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                    _logger.LogError("Chunk upload failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                    logger.LogError("Chunk upload failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
                     return Result<string>.Failure("CHUNK_FAILED", $"Chunk upload failed: {response.StatusCode}");
                 }
             }
@@ -453,7 +443,7 @@ namespace TorreClou.Infrastructure.Services
             // If we exit the loop and all bytes were sent, finalize the upload as fallback
             if (currentPosition >= fileSize)
             {
-                _logger.LogInformation("Loop exited with all bytes sent, finalizing upload | File: {FileName}", fileName);
+                logger.LogInformation("Loop exited with all bytes sent, finalizing upload | File: {FileName}", fileName);
                 // Make a final PUT request with Content-Range query format to finalize and get file ID
                 var finalRequest = new HttpRequestMessage(HttpMethod.Put, resumeUri);
                 finalRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
@@ -469,17 +459,17 @@ namespace TorreClou.Infrastructure.Services
                     var driveFile = JsonSerializer.Deserialize<FileUploadResponse>(responseJson);
 
                     // Report final progress
-                    if (_progressContext.IsConfigured)
+                    if (progressContext.IsConfigured)
                     {
-                        await _progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
+                        await progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
                     }
 
-                    _logger.LogInformation("Upload complete (finalized after loop exit) | File: {FileName} | DriveFileId: {FileId}", fileName, driveFile?.Id);
+                    logger.LogInformation("Upload complete (finalized after loop exit) | File: {FileName} | DriveFileId: {FileId}", fileName, driveFile?.Id);
                     return Result.Success(driveFile?.Id ?? "");
                 }
                 else
                 {
-                    _logger.LogWarning("Finalization request failed after loop exit: {StatusCode} | File: {FileName}", finalResponse.StatusCode, fileName);
+                    logger.LogWarning("Finalization request failed after loop exit: {StatusCode} | File: {FileName}", finalResponse.StatusCode, fileName);
                 }
             }
 
@@ -526,45 +516,6 @@ namespace TorreClou.Infrastructure.Services
                 ".exe" => "application/x-msdownload",
                 _ => "application/octet-stream"
             };
-        }
-
-        private class GoogleDriveCredentials
-        {
-            [System.Text.Json.Serialization.JsonPropertyName("access_token")]
-            public string AccessToken { get; set; } = string.Empty;
-
-            [System.Text.Json.Serialization.JsonPropertyName("refresh_token")]
-            public string? RefreshToken { get; set; }
-
-            [System.Text.Json.Serialization.JsonPropertyName("expires_at")]
-            public string? ExpiresAt { get; set; }
-        }
-
-        private class TokenRefreshResponse
-        {
-            [System.Text.Json.Serialization.JsonPropertyName("access_token")]
-            public string AccessToken { get; set; } = string.Empty;
-
-            [System.Text.Json.Serialization.JsonPropertyName("expires_in")]
-            public int ExpiresIn { get; set; }
-        }
-
-        private class FolderResponse
-        {
-            [System.Text.Json.Serialization.JsonPropertyName("id")]
-            public string Id { get; set; } = string.Empty;
-
-            [System.Text.Json.Serialization.JsonPropertyName("name")]
-            public string Name { get; set; } = string.Empty;
-        }
-
-        private class FileUploadResponse
-        {
-            [System.Text.Json.Serialization.JsonPropertyName("id")]
-            public string Id { get; set; } = string.Empty;
-
-            [System.Text.Json.Serialization.JsonPropertyName("name")]
-            public string Name { get; set; } = string.Empty;
         }
     }
 }
