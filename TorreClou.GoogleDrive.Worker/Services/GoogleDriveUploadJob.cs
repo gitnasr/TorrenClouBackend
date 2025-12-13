@@ -149,9 +149,10 @@ namespace TorreClou.GoogleDrive.Worker.Services
                     LogPrefix, job.Id, file.Name, progress);
                 var progressHandler = new Progress<double>(percent =>
                 {
+                    // Only log progress updates - do NOT update database from background thread
+                    // Database updates should only happen on the main thread to avoid DbContext concurrency issues
                     Logger.LogInformation("{LogPrefix} Upload progress | JobId: {JobId} | File: {File} | Percent: {Percent:F1}%",
                         LogPrefix, job.Id, file.Name, percent);
-                    UpdateHeartbeatAsync(job, $"Uploading file: {file.Name} - {percent:F1}%").Wait();
                 });
                 // Upload file to Google Drive
                 var uploadResult = await googleDriveService.UploadFileAsync(
