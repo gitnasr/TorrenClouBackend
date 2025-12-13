@@ -40,6 +40,9 @@ namespace TorreClou.Infrastructure.Extensions
             // Google Drive Services
             services.Configure<GoogleDriveSettings>(configuration.GetSection("GoogleDrive"));
             services.AddScoped<IGoogleDriveService, GoogleDriveService>();
+            
+            // Upload Progress Context (scoped per Hangfire job)
+            services.AddScoped<IUploadProgressContext, UploadProgressContext>();
 
             services.AddDbContext<ApplicationDbContext>((sp, options) =>
             {

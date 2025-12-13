@@ -61,6 +61,9 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(
 builder.Services.Configure<GoogleDriveSettings>(builder.Configuration.GetSection("GoogleDrive"));
 builder.Services.AddScoped<IGoogleDriveService, GoogleDriveService>();
 
+// Upload Progress Context (scoped per job for progress tracking and resume support)
+builder.Services.AddScoped<IUploadProgressContext, UploadProgressContext>();
+
 // Background Services
 // Google Drive Worker - Redis stream consumer for upload jobs
 builder.Services.AddHostedService<GoogleDriveWorker>();
