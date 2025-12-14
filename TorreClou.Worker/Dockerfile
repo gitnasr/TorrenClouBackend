@@ -26,7 +26,7 @@ RUN dotnet build -c Release --no-restore -o /app/build
 RUN dotnet publish -c Release --no-restore -o /app/publish /p:UseAppHost=false
 
 # Stage 2: Runtime
-FROM mcr.microsoft.com/dotnet/runtime:9.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app
 
 # Create non-root user
