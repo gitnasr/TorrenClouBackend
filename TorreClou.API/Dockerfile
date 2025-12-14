@@ -35,6 +35,12 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 # Copy published output
 COPY --from=build /app/publish .
 
+# Install curl and ca-certificates for DataDog tracer download
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # Download and install the DataDog Tracer (must be done as root)
 # Please select the corresponding download for your Linux containers https://github.com/DataDog/dd-trace-dotnet/releases/latest
 RUN mkdir -p /opt/datadog \
