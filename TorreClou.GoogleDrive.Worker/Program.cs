@@ -25,7 +25,7 @@ try
 {
     Log.Information("Starting Google Drive worker application");
 
-    var builder = Host.CreateApplicationBuilder(args);
+var builder = Host.CreateApplicationBuilder(args);
 
     // Configure Serilog with Loki
     var lokiUrl = builder.Configuration["Observability:LokiUrl"] ?? 
@@ -74,7 +74,7 @@ try
     // Add OpenTelemetry
     builder.Services.AddTorreClouOpenTelemetry(ServiceName, builder.Configuration, builder.Environment);
 
-    // Database configuration
+// Database configuration
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
 {
     var interceptor = new UpdateAuditableEntitiesInterceptor();
@@ -120,7 +120,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(
 
 // Google Drive Services
 builder.Services.Configure<GoogleDriveSettings>(builder.Configuration.GetSection("GoogleDrive"));
-builder.Services.AddScoped<IGoogleDriveService, GoogleDriveService>();
+builder.Services.AddScoped<IGoogleDriveJob, GoogleDriveJobService>();
 
 // Upload Progress Context (scoped per job for progress tracking and resume support)
 builder.Services.AddScoped<IUploadProgressContext, UploadProgressContext>();

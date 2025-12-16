@@ -2,9 +2,8 @@ using System.Text.Json.Serialization;
 
 namespace TorreClou.Infrastructure.Services
 {
-    public partial class GoogleDriveService
-    {
-        public class TokenRefreshResponse
+   
+        public class GoogleDriveTokenRefreshResponse
         {
             [JsonPropertyName("access_token")]
             public string AccessToken { get; set; } = string.Empty;
@@ -12,5 +11,5 @@ namespace TorreClou.Infrastructure.Services
             [JsonPropertyName("expires_in")]
             public int ExpiresIn { get; set; }
         }
-    }
+    
 }

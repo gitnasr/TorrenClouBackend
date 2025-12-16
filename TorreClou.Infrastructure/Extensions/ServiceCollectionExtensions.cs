@@ -10,6 +10,7 @@ using TorreClou.Infrastructure.Repositories;
 using TorreClou.Infrastructure.Services;
 using TorreClou.Infrastructure.Settings;
 using TorreClou.Core.Options;
+using TorreClou.Application.Services.Google_Drive;
 
 namespace TorreClou.Infrastructure.Extensions
 {
@@ -39,8 +40,9 @@ namespace TorreClou.Infrastructure.Extensions
 
             // Google Drive Services
             services.Configure<GoogleDriveSettings>(configuration.GetSection("GoogleDrive"));
+            services.AddScoped<IGoogleDriveJob, GoogleDriveJobService>();
             services.AddScoped<IGoogleDriveService, GoogleDriveService>();
-            
+
             // Upload Progress Context (scoped per Hangfire job)
             services.AddScoped<IUploadProgressContext, UploadProgressContext>();
 

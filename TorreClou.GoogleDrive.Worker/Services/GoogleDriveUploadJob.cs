@@ -16,7 +16,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
     public class GoogleDriveUploadJob(
         IUnitOfWork unitOfWork,
         ILogger<GoogleDriveUploadJob> logger,
-        IGoogleDriveService googleDriveService,
+        IGoogleDriveJob googleDriveService,
         IUploadProgressContext progressContext,
         TransferSpeedMetrics speedMetrics) : BaseJob<GoogleDriveUploadJob>(unitOfWork, logger)
     {

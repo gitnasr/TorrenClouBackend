@@ -1,6 +1,6 @@
 namespace TorreClou.Core.DTOs.Storage
 {
-    public class StorageProfileDto
+    public class StorageProfileDetailDto
     {
         public int Id { get; set; }
         public string ProfileName { get; set; } = string.Empty;
@@ -9,6 +9,6 @@ namespace TorreClou.Core.DTOs.Storage
         public bool IsDefault { get; set; }
         public bool IsActive { get; set; }
         public DateTime CreatedAt { get; set; }
+        public DateTime? UpdatedAt { get; set; }
     }
 }
-

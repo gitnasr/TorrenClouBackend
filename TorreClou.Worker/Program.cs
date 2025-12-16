@@ -28,7 +28,7 @@ try
 {
     Log.Information("Starting worker application");
 
-    var builder = Host.CreateApplicationBuilder(args);
+var builder = Host.CreateApplicationBuilder(args);
 
     // Configure Serilog with Loki
     var lokiUrl = builder.Configuration["Observability:LokiUrl"] ?? 
@@ -77,7 +77,7 @@ try
     // Add OpenTelemetry
     builder.Services.AddTorreClouOpenTelemetry(ServiceName, builder.Configuration, builder.Environment);
 
-    // Database configuration
+// Database configuration
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
 {
     var interceptor = new UpdateAuditableEntitiesInterceptor();

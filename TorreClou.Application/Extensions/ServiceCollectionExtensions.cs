@@ -22,6 +22,7 @@ namespace TorreClou.Application.Extensions
             services.AddScoped<IQuotePricingService, QuotePricingService>();
             services.AddScoped<IJobService, JobService>();
             services.AddScoped<IGoogleDriveAuthService, GoogleDriveAuthService>();
+            services.AddScoped<IInvoiceService, InvoiceService>();
 
             return services;
         }

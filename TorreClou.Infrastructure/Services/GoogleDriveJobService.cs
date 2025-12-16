@@ -11,11 +11,11 @@ using TorreClou.Core.Shared;
 
 namespace TorreClou.Infrastructure.Services
 {
-    public partial class GoogleDriveService(
+    public  class GoogleDriveJobService(
         IOptions<GoogleDriveSettings> settings,
         IHttpClientFactory httpClientFactory,
-        ILogger<GoogleDriveService> logger,
-        IUploadProgressContext progressContext) : IGoogleDriveService
+        ILogger<GoogleDriveJobService> logger,
+        IUploadProgressContext progressContext) : IGoogleDriveJob
     {
         private readonly GoogleDriveSettings _settings = settings.Value;
 
@@ -86,7 +86,7 @@ namespace TorreClou.Infrastructure.Services
                 }
 
                 var jsonResponse = await response.Content.ReadAsStringAsync(cancellationToken);
-                var tokenResponse = JsonSerializer.Deserialize<TokenRefreshResponse>(jsonResponse);
+                var tokenResponse = JsonSerializer.Deserialize<GoogleDriveTokenRefreshResponse>(jsonResponse);
 
                 if (tokenResponse == null || string.IsNullOrEmpty(tokenResponse.AccessToken))
                 {
