@@ -18,7 +18,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
         ILogger<GoogleDriveUploadJob> logger,
         IGoogleDriveJob googleDriveService,
         IUploadProgressContext progressContext,
-        TransferSpeedMetrics speedMetrics) : BaseJob<GoogleDriveUploadJob>(unitOfWork, logger)
+        ITransferSpeedMetrics speedMetrics) : BaseJob<GoogleDriveUploadJob>(unitOfWork, logger)
     {
         protected override string LogPrefix => "[GOOGLE_DRIVE:UPLOAD]";
 

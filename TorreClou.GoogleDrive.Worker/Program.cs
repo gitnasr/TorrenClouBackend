@@ -124,10 +124,12 @@ builder.Services.AddScoped<IGoogleDriveJob, GoogleDriveJobService>();
 
 // Upload Progress Context (scoped per job for progress tracking and resume support)
 builder.Services.AddScoped<IUploadProgressContext, UploadProgressContext>();
+    // Transfer Speed Metrics (singleton for metrics collection)
+    builder.Services.AddSingleton<TransferSpeedMetrics>();
 
-// Background Services
-// Google Drive Worker - Redis stream consumer for upload jobs
-builder.Services.AddHostedService<GoogleDriveWorker>();
+    // Background Services
+    // Google Drive Worker - Redis stream consumer for upload jobs
+    builder.Services.AddHostedService<GoogleDriveWorker>();
 
 var host = builder.Build();
 host.Run();

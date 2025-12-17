@@ -1,23 +1,24 @@
 using System.Collections.Generic;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
+using TorreClou.Core.Interfaces;
 
 namespace TorreClou.Infrastructure.Services
 {
     /// <summary>
     /// Service for tracking and recording download/upload speeds using OpenTelemetry metrics.
     /// </summary>
-    public class TransferSpeedMetrics
+    public class TransferSpeedMetrics : ITransferSpeedMetrics
     {
         private static readonly Meter Meter = new("TorreClou.Transfer", "1.0.0");
-        
+
         private readonly Histogram<double> _downloadSpeedGauge;
         private readonly Histogram<double> _uploadSpeedGauge;
         private readonly Counter<long> _downloadTotalBytes;
         private readonly Counter<long> _uploadTotalBytes;
         private readonly Histogram<double> _downloadDuration;
         private readonly Histogram<double> _uploadDuration;
-        
+
         private readonly ILogger<TransferSpeedMetrics>? _logger;
 
         public TransferSpeedMetrics(ILogger<TransferSpeedMetrics>? logger = null)
@@ -158,7 +159,7 @@ namespace TorreClou.Infrastructure.Services
         {
             RecordDownloadBytes(jobId, userId, jobType, totalBytes);
             RecordDownloadDuration(jobId, userId, jobType, durationSeconds);
-            
+
             if (durationSeconds > 0)
             {
                 var averageSpeed = totalBytes / durationSeconds;
@@ -173,7 +174,7 @@ namespace TorreClou.Infrastructure.Services
         {
             RecordUploadBytes(jobId, userId, jobType, totalBytes);
             RecordUploadDuration(jobId, userId, jobType, durationSeconds);
-            
+
             if (durationSeconds > 0)
             {
                 var averageSpeed = totalBytes / durationSeconds;
