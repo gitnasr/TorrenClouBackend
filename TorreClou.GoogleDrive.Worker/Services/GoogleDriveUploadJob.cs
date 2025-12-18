@@ -50,23 +50,30 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 return;
             }
 
-            // 2. Validate job state - must be in UPLOADING or RETRYING status
-            if (job.Status != JobStatus.UPLOADING && job.Status != JobStatus.RETRYING)
+            // 2. Handle job status transitions
+            if (job.Status == JobStatus.PENDING_UPLOAD)
+            {
+                // Job just completed download - transition to UPLOADING
+                Logger.LogInformation("{LogPrefix} Job ready for upload, transitioning to UPLOADING | JobId: {JobId}", 
+                    LogPrefix, job.Id);
+                job.Status = JobStatus.UPLOADING;
+                job.CurrentState = "Starting upload...";
+                await UnitOfWork.Complete();
+            }
+            else if (job.Status == JobStatus.RETRYING)
+            {
+                // Job is retrying - transition back to UPLOADING for this attempt
+                Logger.LogInformation("{LogPrefix} Retrying job | JobId: {JobId} | NextRetryAt: {NextRetry} | Error: {Error}", 
+                    LogPrefix, job.Id, job.NextRetryAt, job.ErrorMessage);
+                job.Status = JobStatus.UPLOADING;
+                job.CurrentState = "Retrying upload...";
+                await UnitOfWork.Complete();
+            }
+            else if (job.Status != JobStatus.UPLOADING)
             {
                 Logger.LogWarning("{LogPrefix} Unexpected job status | JobId: {JobId} | Status: {Status}", 
                     LogPrefix, job.Id, job.Status);
                 // Don't return - allow execution if in unexpected state (might be recovery scenario)
-            }
-
-            // 3. If job is retrying, log it
-            if (job.Status == JobStatus.RETRYING)
-            {
-                Logger.LogInformation("{LogPrefix} Retrying job | JobId: {JobId} | NextRetryAt: {NextRetry} | Error: {Error}", 
-                    LogPrefix, job.Id, job.NextRetryAt, job.ErrorMessage);
-                // Update status back to UPLOADING for this retry attempt
-                job.Status = JobStatus.UPLOADING;
-                job.CurrentState = "Retrying upload...";
-                await UnitOfWork.Complete();
             }
 
             // 4. Validate download path exists

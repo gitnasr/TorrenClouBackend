@@ -40,6 +40,7 @@ namespace TorreClou.Application.Services
                      (j.Status == JobStatus.RETRYING || 
                       j.Status == JobStatus.QUEUED || 
                       j.Status == JobStatus.PROCESSING || 
+                      j.Status == JobStatus.PENDING_UPLOAD ||
                       j.Status == JobStatus.UPLOADING));
             var existingJob = await unitOfWork.Repository<UserJob>().GetEntityWithSpec(existingJobSpec);
             
@@ -192,12 +193,14 @@ namespace TorreClou.Application.Services
                 ActiveJobs = allJobs.Count(job => 
                     job.Status == JobStatus.QUEUED || 
                     job.Status == JobStatus.PROCESSING || 
+                    job.Status == JobStatus.PENDING_UPLOAD ||
                     job.Status == JobStatus.UPLOADING ||
                     job.Status == JobStatus.RETRYING),
                 CompletedJobs = allJobs.Count(job => job.Status == JobStatus.COMPLETED),
                 FailedJobs = allJobs.Count(job => job.Status == JobStatus.FAILED),
                 QueuedJobs = allJobs.Count(job => job.Status == JobStatus.QUEUED),
                 ProcessingJobs = allJobs.Count(job => job.Status == JobStatus.PROCESSING),
+                PendingUploadJobs = allJobs.Count(job => job.Status == JobStatus.PENDING_UPLOAD),
                 UploadingJobs = allJobs.Count(job => job.Status == JobStatus.UPLOADING),
                 RetryingJobs = allJobs.Count(job => job.Status == JobStatus.RETRYING),
                 CancelledJobs = allJobs.Count(job => job.Status == JobStatus.CANCELLED)

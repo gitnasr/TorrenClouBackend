@@ -357,9 +357,9 @@ namespace TorreClou.Worker.Services
             // Force sync to Backblaze B2 if using FUSE mount
             await SyncToBackblazeAsync(job);
 
-            // Update job status
-            job.Status = JobStatus.UPLOADING;
-            job.CurrentState = "Download complete. Starting upload...";
+            // Update job status to PENDING_UPLOAD - waiting for upload worker to pick it up
+            job.Status = JobStatus.PENDING_UPLOAD;
+            job.CurrentState = "Download complete. Waiting for upload...";
             job.BytesDownloaded = job.TotalBytes;
             await UnitOfWork.Complete();
 
