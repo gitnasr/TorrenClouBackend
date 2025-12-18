@@ -452,10 +452,11 @@ namespace TorreClou.Worker.Services
 
                 // Execute rclone sync to force upload cached files
                 // Using "copy" instead of "sync" to avoid deleting files that may exist in B2
+                // Add flags to prevent bucket creation and handle existing paths gracefully
                 var processInfo = new ProcessStartInfo
                 {
                     FileName = "rclone",
-                    Arguments = $"copy \"{job.DownloadPath}\" \"{bucketPath}\" --progress --transfers 4 --checkers 8",
+                    Arguments = $"copy \"{job.DownloadPath}\" \"{bucketPath}\" --progress --transfers 4 --checkers 8 --no-check-dest --ignore-existing",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
