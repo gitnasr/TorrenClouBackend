@@ -8,6 +8,7 @@ using TorreClou.Infrastructure.Extensions;
 using TorreClou.Core.Interfaces;
 using TorreClou.Infrastructure.Interceptors;
 using TorreClou.Infrastructure.Services;
+using TorreClou.Infrastructure.Settings;
 using TorreClou.Core.Options;
 using Hangfire;
 using Hangfire.PostgreSql;
@@ -120,6 +121,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(
 
 // Google Drive Services
 builder.Services.Configure<GoogleDriveSettings>(builder.Configuration.GetSection("GoogleDrive"));
+builder.Services.Configure<BackblazeSettings>(builder.Configuration.GetSection("Backblaze"));
 builder.Services.AddScoped<IGoogleDriveJob, GoogleDriveJobService>();
 
 // Upload Progress Context (scoped per job for progress tracking and resume support)

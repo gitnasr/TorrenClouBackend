@@ -6,6 +6,8 @@ using Microsoft.Extensions.Logging;
 using Hangfire;
 using TorreClou.Infrastructure.Workers;
 using TorreClou.Infrastructure.Services;
+using TorreClou.Infrastructure.Settings;
+using Microsoft.Extensions.Options;
 
 namespace TorreClou.GoogleDrive.Worker.Services
 {
@@ -18,8 +20,11 @@ namespace TorreClou.GoogleDrive.Worker.Services
         ILogger<GoogleDriveUploadJob> logger,
         IGoogleDriveJob googleDriveService,
         IUploadProgressContext progressContext,
-        ITransferSpeedMetrics speedMetrics) : BaseJob<GoogleDriveUploadJob>(unitOfWork, logger)
+        ITransferSpeedMetrics speedMetrics,
+        IOptions<BackblazeSettings> backblazeSettings) : BaseJob<GoogleDriveUploadJob>(unitOfWork, logger)
     {
+        private readonly BackblazeSettings _backblazeSettings = backblazeSettings.Value;
+
         protected override string LogPrefix => "[GOOGLE_DRIVE:UPLOAD]";
 
         protected override void ConfigureSpecification(BaseSpecification<UserJob> spec)
@@ -45,9 +50,32 @@ namespace TorreClou.GoogleDrive.Worker.Services
             }
 
             // 2. Validate download path exists
-            if (string.IsNullOrEmpty(job.DownloadPath) || !Directory.Exists(job.DownloadPath))
+            if (string.IsNullOrEmpty(job.DownloadPath))
             {
-                await MarkJobFailedAsync(job, $"Download path {job.DownloadPath} not found. Files may have been deleted.");
+                await MarkJobFailedAsync(job, "Download path is not set.");
+                return;
+            }
+
+            // Check if path is under Backblaze mount and validate mount exists
+            if (_backblazeSettings.UseFuseMount && 
+                !string.IsNullOrEmpty(_backblazeSettings.MountPath) &&
+                job.DownloadPath.StartsWith(_backblazeSettings.MountPath, StringComparison.OrdinalIgnoreCase))
+            {
+                // Validate mount point exists
+                if (!Directory.Exists(_backblazeSettings.MountPath))
+                {
+                    await MarkJobFailedAsync(job, $"Backblaze mount point {_backblazeSettings.MountPath} not found. Ensure rclone mount is running.");
+                    return;
+                }
+
+                Logger.LogInformation("{LogPrefix} Using Backblaze mount | JobId: {JobId} | MountPath: {MountPath} | DownloadPath: {DownloadPath}",
+                    LogPrefix, job.Id, _backblazeSettings.MountPath, job.DownloadPath);
+            }
+
+            // Validate download path exists
+            if (!Directory.Exists(job.DownloadPath))
+            {
+                await MarkJobFailedAsync(job, $"Download path {job.DownloadPath} not found. Files may have been deleted or not synced to mount.");
                 return;
             }
 
