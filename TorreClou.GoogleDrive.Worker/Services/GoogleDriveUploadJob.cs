@@ -50,6 +50,11 @@ namespace TorreClou.GoogleDrive.Worker.Services
                     LogPrefix, job.Id);
                 job.Status = JobStatus.UPLOADING;
                 job.CurrentState = "Starting upload...";
+                // Set StartedAt if not already set (for recovery tracking)
+                if (job.StartedAt == null)
+                {
+                    job.StartedAt = DateTime.UtcNow;
+                }
                 job.LastHeartbeat = DateTime.UtcNow;
                 await UnitOfWork.Complete();
             }
@@ -63,7 +68,24 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 job.LastHeartbeat = DateTime.UtcNow;
                 await UnitOfWork.Complete();
             }
-            else if (job.Status != JobStatus.UPLOADING)
+            else if (job.Status == JobStatus.UPLOADING)
+            {
+                // Job is already UPLOADING (recovery scenario) - ensure StartedAt is set for elapsed time tracking
+                if (job.StartedAt == null)
+                {
+                    Logger.LogInformation("{LogPrefix} Setting StartedAt for recovered job | JobId: {JobId}", 
+                        LogPrefix, job.Id);
+                    job.StartedAt = DateTime.UtcNow;
+                    await UnitOfWork.Complete();
+                }
+                else
+                {
+                    // StartedAt already set - this is a recovery, elapsed time will be calculated from original start
+                    Logger.LogInformation("{LogPrefix} Resuming job from recovery | JobId: {JobId} | StartedAt: {StartedAt} | Elapsed: {ElapsedMinutes:F1} min", 
+                        LogPrefix, job.Id, job.StartedAt, (DateTime.UtcNow - job.StartedAt.Value).TotalMinutes);
+                }
+            }
+            else
             {
                 Logger.LogWarning("{LogPrefix} Unexpected job status | JobId: {JobId} | Status: {Status}", 
                     LogPrefix, job.Id, job.Status);
@@ -126,10 +148,10 @@ namespace TorreClou.GoogleDrive.Worker.Services
 
             // 7. Get files to upload (excluding .dht, .fresume, .torrent files)
             // Wait for files to appear (for FUSE mount sync delays)
-            var filesToUpload = await WaitForFilesAsync(job.DownloadPath, cancellationToken);
+            var filesToUpload = await WaitForFilesAsync(job, job.DownloadPath, cancellationToken);
             if (filesToUpload.Length == 0)
             {
-                await MarkJobFailedAsync(job, $"No files found in download path {job.DownloadPath} after waiting. Directory exists: {Directory.Exists(job.DownloadPath)}");
+                await MarkJobFailedAsync(job, $"No files found in download path {job.DownloadPath} after waiting 2 hours. Directory exists: {Directory.Exists(job.DownloadPath)}");
                 return;
             }
 
@@ -199,40 +221,110 @@ namespace TorreClou.GoogleDrive.Worker.Services
         }
 
         /// <summary>
-        /// Waits for files to appear in the download path, retrying up to 10 times with 2-second delays.
+        /// Waits for files to appear in the download path with extended retry strategy:
+        /// - Phase 1: Retry every 20 seconds for 1 hour (180 retries)
+        /// - Phase 2: Retry every 10 minutes for 1 hour (6 retries)
+        /// - After 2 hours total: Return empty array to trigger failure
         /// This handles FUSE mount sync delays where files might not be immediately visible.
+        /// Uses job.StartedAt to track total elapsed time across worker restarts for proper recovery.
         /// </summary>
-        private async Task<FileInfo[]> WaitForFilesAsync(string downloadPath, CancellationToken cancellationToken)
+        private async Task<FileInfo[]> WaitForFilesAsync(UserJob job, string downloadPath, CancellationToken cancellationToken)
         {
-            const int maxRetries = 10;
-            const int delaySeconds = 2;
+            const int phase1IntervalSeconds = 20;  // 20 seconds
+            const int phase2IntervalSeconds = 600; // 10 minutes
+            const int phase1DurationSeconds = 3600; // 1 hour
+            const int totalDurationSeconds = 7200;   // 2 hours total
 
-            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            // Use StartedAt as baseline for recovery - if job was restarted, this preserves elapsed time
+            var baselineTime = job.StartedAt ?? DateTime.UtcNow;
+            var attemptCount = 0;
+            var lastPhase = 0; // Track phase transitions for logging
+
+            Logger.LogInformation("{LogPrefix} Starting file wait with extended retry | JobId: {JobId} | Path: {Path} | Baseline: {Baseline}", 
+                LogPrefix, job.Id, downloadPath, baselineTime);
+
+            while (true)
             {
                 if (cancellationToken.IsCancellationRequested)
+                {
+                    Logger.LogWarning("{LogPrefix} File wait cancelled | JobId: {JobId}", LogPrefix, job.Id);
                     break;
+                }
 
-                var files = GetFilesToUpload(downloadPath);
+                var elapsed = DateTime.UtcNow - baselineTime;
                 
+                // Check if we've exceeded total duration
+                if (elapsed.TotalSeconds >= totalDurationSeconds)
+                {
+                    Logger.LogError("{LogPrefix} File wait timeout after {ElapsedMinutes:F1} minutes | JobId: {JobId} | Path: {Path}", 
+                        LogPrefix, elapsed.TotalMinutes, job.Id, downloadPath);
+                    return GetFilesToUpload(downloadPath); // Return empty or whatever is found
+                }
+
+                // Check for files
+                var files = GetFilesToUpload(downloadPath);
+                attemptCount++;
+
                 if (files.Length > 0)
                 {
-                    if (attempt > 1)
+                    if (attemptCount > 1)
                     {
-                        Logger.LogInformation("{LogPrefix} Files found after {Attempt} attempts | Count: {Count}", 
-                            LogPrefix, attempt, files.Length);
+                        Logger.LogInformation("{LogPrefix} Files found after {ElapsedMinutes:F1} minutes ({Attempt} attempts) | JobId: {JobId} | Count: {Count}", 
+                            LogPrefix, elapsed.TotalMinutes, attemptCount, job.Id, files.Length);
                     }
                     return files;
                 }
 
-                if (attempt < maxRetries)
+                // Determine current phase and wait interval
+                int waitIntervalSeconds;
+                string phaseDescription;
+                string statusMessage;
+
+                if (elapsed.TotalSeconds < phase1DurationSeconds)
                 {
-                    Logger.LogDebug("{LogPrefix} No files found, waiting {Delay}s before retry {Attempt}/{MaxRetries} | Path: {Path}", 
-                        LogPrefix, delaySeconds, attempt, maxRetries, downloadPath);
-                    await Task.Delay(TimeSpan.FromSeconds(delaySeconds), cancellationToken);
+                    // Phase 1: Retry every 20 seconds
+                    waitIntervalSeconds = phase1IntervalSeconds;
+                    phaseDescription = "Phase 1 (20s intervals)";
+                    statusMessage = $"Waiting for files to sync (retrying every 20s)... Elapsed: {elapsed.TotalMinutes:F1} min";
+                    
+                    if (lastPhase != 1)
+                    {
+                        Logger.LogInformation("{LogPrefix} Entering Phase 1: Retrying every 20 seconds for up to 1 hour | JobId: {JobId}", 
+                            LogPrefix, job.Id);
+                        lastPhase = 1;
+                    }
                 }
+                else
+                {
+                    // Phase 2: Retry every 10 minutes
+                    waitIntervalSeconds = phase2IntervalSeconds;
+                    phaseDescription = "Phase 2 (10min intervals)";
+                    statusMessage = $"Waiting for files to sync (retrying every 10min)... Elapsed: {elapsed.TotalMinutes:F1} min";
+                    
+                    if (lastPhase != 2)
+                    {
+                        Logger.LogInformation("{LogPrefix} Entering Phase 2: Retrying every 10 minutes for up to 1 hour | JobId: {JobId} | Elapsed: {ElapsedMinutes:F1} min", 
+                            LogPrefix, job.Id, elapsed.TotalMinutes);
+                        lastPhase = 2;
+                    }
+                }
+
+                // Update job heartbeat and status
+               
+                    job.CurrentState = statusMessage;
+                    job.LastHeartbeat = DateTime.UtcNow;
+                    await UnitOfWork.Complete();
+               
+
+                // Log retry attempt
+                Logger.LogCritical("{LogPrefix} No files found, waiting {Interval}s before retry | JobId: {JobId} | {Phase} | Attempt: {Attempt} | Elapsed: {ElapsedMinutes:F1} min | Path: {Path}", 
+                    LogPrefix, waitIntervalSeconds, job.Id, phaseDescription, attemptCount, elapsed.TotalMinutes, downloadPath);
+
+                // Wait before next retry
+                await Task.Delay(TimeSpan.FromSeconds(waitIntervalSeconds), cancellationToken);
             }
 
-            // Final attempt - return empty array if still no files
+            // If we exit the loop (cancellation), return whatever we find
             return GetFilesToUpload(downloadPath);
         }
 
