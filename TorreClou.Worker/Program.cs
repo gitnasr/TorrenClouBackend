@@ -89,6 +89,10 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
+// Backblaze Settings
+builder.Services.Configure<TorreClou.Infrastructure.Settings.BackblazeSettings>(
+    builder.Configuration.GetSection("Backblaze"));
+
 // HttpClient for downloading torrent files
 builder.Services.AddHttpClient();
 

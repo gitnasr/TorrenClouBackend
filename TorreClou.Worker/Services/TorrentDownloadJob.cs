@@ -11,6 +11,7 @@ using TorreClou.Infrastructure.Workers;
 using TorreClou.Infrastructure.Services;
 using TorreClou.Infrastructure.Settings;
 using StackExchange.Redis;
+using System.Diagnostics;
 
 namespace TorreClou.Worker.Services
 {
@@ -353,6 +354,9 @@ namespace TorreClou.Worker.Services
             // Save final state
             await SaveEngineStateAsync(engine, "download-complete");
 
+            // Force sync to Backblaze B2 if using FUSE mount
+            await SyncToBackblazeAsync(job);
+
             // Update job status
             job.Status = JobStatus.UPLOADING;
             job.CurrentState = "Download complete. Starting upload...";
@@ -409,10 +413,93 @@ namespace TorreClou.Worker.Services
             }
         }
 
+
         private static string GetUploadStreamKey(StorageProviderType providerType)
         {
             var providerName = providerType.ToString().ToLowerInvariant();
             return $"uploads:{providerName}:stream";
+        }
+
+        /// <summary>
+        /// Forces rclone to sync cached files to Backblaze B2.
+        /// This ensures files are visible to the GoogleDrive upload worker which has its own rclone mount.
+        /// </summary>
+        private async Task SyncToBackblazeAsync(UserJob job)
+        {
+            // Only sync if using FUSE mount and download path is under the mount
+            if (!_backblazeSettings.UseFuseMount || 
+                string.IsNullOrEmpty(_backblazeSettings.MountPath) ||
+                string.IsNullOrEmpty(job.DownloadPath) ||
+                !job.DownloadPath.StartsWith(_backblazeSettings.MountPath, StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.LogInformation("{LogPrefix} Skipping Backblaze sync - not using FUSE mount or path not under mount | JobId: {JobId}", 
+                    LogPrefix, job.Id);
+                return;
+            }
+
+            try
+            {
+                // Update job status
+                job.CurrentState = "Syncing files to cloud storage...";
+                await UnitOfWork.Complete();
+
+                Logger.LogInformation("{LogPrefix} Starting Backblaze B2 sync | JobId: {JobId} | Path: {Path}", 
+                    LogPrefix, job.Id, job.DownloadPath);
+
+                // Get relative path from mount point (e.g., "/mnt/backblaze/torrents/123" -> "torrents/123")
+                var relativePath = job.DownloadPath.Substring(_backblazeSettings.MountPath.Length).TrimStart('/', '\\');
+                var bucketPath = $"backblaze:{_backblazeSettings.BucketName}/{relativePath}";
+
+                // Execute rclone sync to force upload cached files
+                // Using "copy" instead of "sync" to avoid deleting files that may exist in B2
+                var processInfo = new ProcessStartInfo
+                {
+                    FileName = "rclone",
+                    Arguments = $"copy \"{job.DownloadPath}\" \"{bucketPath}\" --progress --transfers 4 --checkers 8",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+                using var process = new Process { StartInfo = processInfo };
+                var outputBuilder = new System.Text.StringBuilder();
+                var errorBuilder = new System.Text.StringBuilder();
+
+                process.OutputDataReceived += (_, e) => { if (e.Data != null) outputBuilder.AppendLine(e.Data); };
+                process.ErrorDataReceived += (_, e) => { if (e.Data != null) errorBuilder.AppendLine(e.Data); };
+
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                // Wait for sync to complete (with timeout)
+                var timeout = TimeSpan.FromMinutes(30);
+                if (!process.WaitForExit((int)timeout.TotalMilliseconds))
+                {
+                    Logger.LogWarning("{LogPrefix} Backblaze sync timed out after {Timeout} minutes | JobId: {JobId}", 
+                        LogPrefix, timeout.TotalMinutes, job.Id);
+                    try { process.Kill(); } catch { /* ignore */ }
+                    return;
+                }
+
+                if (process.ExitCode == 0)
+                {
+                    Logger.LogInformation("{LogPrefix} Backblaze B2 sync completed successfully | JobId: {JobId}", 
+                        LogPrefix, job.Id);
+                }
+                else
+                {
+                    Logger.LogWarning("{LogPrefix} Backblaze sync exited with code {ExitCode} | JobId: {JobId} | Error: {Error}", 
+                        LogPrefix, process.ExitCode, job.Id, errorBuilder.ToString());
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log but don't fail - sync is best effort, files may still be visible
+                Logger.LogWarning(ex, "{LogPrefix} Failed to sync to Backblaze B2 | JobId: {JobId}", 
+                    LogPrefix, job.Id);
+            }
         }
     }
 }
