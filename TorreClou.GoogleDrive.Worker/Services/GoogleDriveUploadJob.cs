@@ -58,6 +58,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
                     LogPrefix, job.Id);
                 job.Status = JobStatus.UPLOADING;
                 job.CurrentState = "Starting upload...";
+                job.LastHeartbeat = DateTime.UtcNow; // Reset heartbeat for new execution
                 await UnitOfWork.Complete();
             }
             else if (job.Status == JobStatus.RETRYING)
@@ -67,6 +68,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
                     LogPrefix, job.Id, job.NextRetryAt, job.ErrorMessage);
                 job.Status = JobStatus.UPLOADING;
                 job.CurrentState = "Retrying upload...";
+                job.LastHeartbeat = DateTime.UtcNow; // Reset heartbeat for retry attempt
                 await UnitOfWork.Complete();
             }
             else if (job.Status != JobStatus.UPLOADING)

@@ -198,12 +198,41 @@ namespace TorreClou.Infrastructure.Workers
         /// </summary>
         protected bool IsJobAlreadyProcessing(UserJob job)
         {
+            // Allow PENDING_UPLOAD and RETRYING to proceed - they need to transition to active states
+            if (job.Status == JobStatus.PENDING_UPLOAD || job.Status == JobStatus.RETRYING)
+            {
+                return false;
+            }
+
             // If job is in active processing states, check heartbeat
             if (job.Status == JobStatus.PROCESSING || job.Status == JobStatus.UPLOADING)
             {
+                if (!job.LastHeartbeat.HasValue)
+                {
+                    // No heartbeat means job hasn't started processing yet - allow it
+                    return false;
+                }
+
+                var heartbeatAge = DateTime.UtcNow - job.LastHeartbeat.Value;
+                
+                // If heartbeat is very recent (within 30 seconds), it might be from a crashed process
+                // Allow it to proceed if it's a retry scenario (Hangfire retry mechanism)
+                if (heartbeatAge < TimeSpan.FromSeconds(30))
+                {
+                    // Very recent heartbeat - could be from a crashed process
+                    // Allow it to proceed if there's an error message (indicating a retry)
+                    if (!string.IsNullOrEmpty(job.ErrorMessage))
+                    {
+                        Logger.LogInformation("{LogPrefix} Job has recent heartbeat but error message suggests retry - allowing execution | JobId: {JobId} | HeartbeatAge: {Age}s", 
+                            LogPrefix, job.Id, heartbeatAge.TotalSeconds);
+                        return false;
+                    }
+                    // Otherwise, assume another instance is actively processing
+                    return true;
+                }
+                
                 // If heartbeat is recent (within 5 minutes), assume another instance is processing
-                if (job.LastHeartbeat.HasValue && 
-                    DateTime.UtcNow - job.LastHeartbeat.Value < TimeSpan.FromMinutes(5))
+                if (heartbeatAge < TimeSpan.FromMinutes(5))
                 {
                     return true;
                 }
