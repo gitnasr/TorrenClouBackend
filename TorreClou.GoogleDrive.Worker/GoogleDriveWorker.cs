@@ -50,10 +50,13 @@ namespace TorreClou.GoogleDrive.Worker
                     return false;
                 }
 
-                // Check if job is already being processed or completed
-                if (job.Status != JobStatus.UPLOADING)
+                // Check if job is ready for upload processing
+                // Accept PENDING_UPLOAD (new jobs from torrent worker), UPLOADING (in-progress), and RETRYING (retry attempts)
+                if (job.Status != JobStatus.UPLOADING && 
+                    job.Status != JobStatus.PENDING_UPLOAD && 
+                    job.Status != JobStatus.RETRYING)
                 {
-                    Logger.LogInformation("[GOOGLE_DRIVE_WORKER] Job not in UPLOADING status | JobId: {JobId} | Status: {Status}", 
+                    Logger.LogInformation("[GOOGLE_DRIVE_WORKER] Job not ready for upload processing | JobId: {JobId} | Status: {Status}", 
                         jobId, job.Status);
                     return true;
                 }
