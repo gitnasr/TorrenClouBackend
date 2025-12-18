@@ -124,6 +124,10 @@ builder.Services.Configure<GoogleDriveSettings>(builder.Configuration.GetSection
 builder.Services.Configure<BackblazeSettings>(builder.Configuration.GetSection("Backblaze"));
 builder.Services.AddScoped<IGoogleDriveJob, GoogleDriveJobService>();
 
+// Job Lease Service (for preventing duplicate job execution)
+builder.Services.Configure<JobLeaseSettings>(builder.Configuration.GetSection("JobLease"));
+builder.Services.AddScoped<IJobLeaseService, JobLeaseService>();
+
 // Upload Progress Context (scoped per job for progress tracking and resume support)
 builder.Services.AddScoped<IUploadProgressContext, UploadProgressContext>();
     // Transfer Speed Metrics (singleton for metrics collection)
