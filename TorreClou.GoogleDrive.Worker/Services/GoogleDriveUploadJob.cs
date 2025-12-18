@@ -243,6 +243,16 @@ namespace TorreClou.GoogleDrive.Worker.Services
             Logger.LogInformation("{LogPrefix} Starting file wait with extended retry | JobId: {JobId} | Path: {Path} | Baseline: {Baseline}", 
                 LogPrefix, job.Id, downloadPath, baselineTime);
 
+            // IMMEDIATE CHECK: Don't wait before first check - files might already be there
+            var immediateFiles = GetFilesToUpload(downloadPath);
+            if (immediateFiles.Length > 0)
+            {
+                Logger.LogInformation("{LogPrefix} Files found immediately (no wait needed) | JobId: {JobId} | Count: {Count}", 
+                    LogPrefix, job.Id, immediateFiles.Length);
+                return immediateFiles;
+            }
+
+            // If no files found immediately, start retry loop
             while (true)
             {
                 if (cancellationToken.IsCancellationRequested)
@@ -334,6 +344,9 @@ namespace TorreClou.GoogleDrive.Worker.Services
             {
                 var directory = new DirectoryInfo(downloadPath);
 
+                // Force refresh to get latest directory state (important for FUSE mounts)
+                directory.Refresh();
+
                 if (!directory.Exists)
                 {
                     Logger.LogWarning("{LogPrefix} Download directory does not exist | Path: {Path}", LogPrefix, downloadPath);
@@ -341,16 +354,38 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 }
 
                 // Get all files excluding MonoTorrent metadata files and .dht files
-                var files = directory.GetFiles("*", SearchOption.AllDirectories)
-                    .Where(f => !f.Name.EndsWith(".fresume", StringComparison.OrdinalIgnoreCase) &&
+                // Use try-catch around GetFiles to handle FUSE mount sync issues gracefully
+                FileInfo[] allFiles;
+                try
+                {
+                    allFiles = directory.GetFiles("*", SearchOption.AllDirectories);
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    // Some files/directories might not be accessible yet on FUSE mount during sync
+                    Logger.LogWarning(ex, "{LogPrefix} UnauthorizedAccessException while getting files (FUSE mount may be syncing) | Path: {Path}", 
+                        LogPrefix, downloadPath);
+                    return [];
+                }
+                catch (DirectoryNotFoundException ex)
+                {
+                    // Directory might have been removed or not fully synced yet
+                    Logger.LogWarning(ex, "{LogPrefix} DirectoryNotFoundException (directory may not be fully synced) | Path: {Path}", 
+                        LogPrefix, downloadPath);
+                    return [];
+                }
+
+                var files = allFiles
+                    .Where(f => f.Exists && // Ensure file still exists (FUSE mount might have stale entries)
+                               !f.Name.EndsWith(".fresume", StringComparison.OrdinalIgnoreCase) &&
                                !f.Name.EndsWith(".dht", StringComparison.OrdinalIgnoreCase) &&
                                !f.Name.EndsWith(".torrent", StringComparison.OrdinalIgnoreCase) &&
                                !f.Name.Equals("dht_nodes.cache", StringComparison.OrdinalIgnoreCase) &&
                                !f.Name.Equals("fastresume", StringComparison.OrdinalIgnoreCase))
                     .ToArray();
 
-                Logger.LogDebug("{LogPrefix} Found {Count} files in directory | Path: {Path}", 
-                    LogPrefix, files.Length, downloadPath);
+                Logger.LogDebug("{LogPrefix} Found {Count} files in directory (out of {Total} total files) | Path: {Path}", 
+                    LogPrefix, files.Length, allFiles.Length, downloadPath);
 
                 return files;
             }
