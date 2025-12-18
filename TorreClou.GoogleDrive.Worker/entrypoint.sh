@@ -14,10 +14,10 @@ account = ${BACKBLAZE_KEY_ID}
 key = ${BACKBLAZE_APP_KEY}
 EOF
     
-    echo "[ENTRYPOINT] Mounting Backblaze B2 bucket: ${BACKBLAZE_BUCKET:-nasrika}"
+    echo "[ENTRYPOINT] Mounting Backblaze B2 bucket: ${BACKBLAZE_BUCKET:-torrenclo}"
     
     # Mount the bucket (read-heavy for Google Drive uploads)
-    rclone mount backblaze:${BACKBLAZE_BUCKET:-nasrika} /mnt/backblaze \
+    rclone mount backblaze:${BACKBLAZE_BUCKET:-torrenclo} /mnt/backblaze \
         --allow-other \
         --vfs-cache-mode full \
         --vfs-read-chunk-size 32M \
