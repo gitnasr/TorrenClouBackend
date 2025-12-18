@@ -52,6 +52,19 @@ EOF
     # Ensure mount point exists and is empty
     mkdir -p /mnt/backblaze
     
+    # Check if FUSE is available
+    if [ ! -e /dev/fuse ]; then
+        echo "[ENTRYPOINT] ERROR: FUSE device not found!"
+        echo "[ENTRYPOINT] Docker container must be run with --privileged or --cap-add SYS_ADMIN --device /dev/fuse"
+        echo "[ENTRYPOINT] Example: docker run --cap-add SYS_ADMIN --device /dev/fuse ..."
+        exit 1
+    fi
+    
+    # Try to load fuse module if modprobe is available (may not work in containers)
+    if command -v modprobe >/dev/null 2>&1; then
+        modprobe fuse 2>/dev/null || true
+    fi
+    
     BUCKET_NAME=${BACKBLAZE_BUCKET:-torrenclo}
     echo "[ENTRYPOINT] Mounting Backblaze B2 bucket: ${BUCKET_NAME}"
     

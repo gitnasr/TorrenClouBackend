@@ -58,5 +58,10 @@ ENV ASPNETCORE_ENVIRONMENT=Production
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app /mnt/backblaze
 
+# Note: FUSE mounts require special Docker privileges
+# Container must be run with: --cap-add SYS_ADMIN --device /dev/fuse
+# Or with: --privileged (less secure)
+# The entrypoint script will check for FUSE availability
+
 # Set entry point
 ENTRYPOINT ["/entrypoint.sh"]
