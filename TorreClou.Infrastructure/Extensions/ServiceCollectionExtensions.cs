@@ -47,7 +47,7 @@ namespace TorreClou.Infrastructure.Extensions
             services.AddScoped<IUploadProgressContext, UploadProgressContext>();
 
             // Transfer Speed Metrics (singleton for metrics collection)
-            services.AddSingleton<TransferSpeedMetrics>();
+            services.AddSingleton<ITransferSpeedMetrics, TransferSpeedMetrics>();
 
             services.AddDbContext<ApplicationDbContext>((sp, options) =>
             {

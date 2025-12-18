@@ -23,7 +23,7 @@ namespace TorreClou.Worker.Services
         IHttpClientFactory httpClientFactory,
         ILogger<TorrentDownloadJob> logger,
         IConnectionMultiplexer redis,
-        TransferSpeedMetrics speedMetrics,
+        ITransferSpeedMetrics speedMetrics,
         IOptions<BackblazeSettings> backblazeSettings) : BaseJob<TorrentDownloadJob>(unitOfWork, logger)
     {
         private readonly BackblazeSettings _backblazeSettings = backblazeSettings.Value;
