@@ -112,24 +112,21 @@ namespace TorreClou.Worker.Services
                 _engine = CreateEngine(downloadPath);
                 manager = await _engine.AddAsync(torrent, downloadPath);
                 
-                // Wait for manager to fully initialize from FastResume
-                await Task.Delay(500, cancellationToken);
-                
-                // Read actual downloaded bytes from manager (from FastResume) and update database
-                var actualDownloaded = manager.Monitor.DataBytesReceived;
-                if (actualDownloaded > 0 && actualDownloaded != job.BytesDownloaded)
-                {
-                    Logger.LogInformation("{LogPrefix} Resuming with actual progress | JobId: {JobId} | DB: {DbBytes} | Actual: {ActualBytes}", 
-                        LogPrefix, job.Id, job.BytesDownloaded, actualDownloaded);
-                    job.BytesDownloaded = actualDownloaded;
-                    await UnitOfWork.Complete();
-                }
+                Logger.LogInformation(
+                    "{LogPrefix} Torrent loaded | JobId: {JobId} | Name: {Name} | Size: {SizeMB:F2} MB | Path: {Path} | MaxConnections: {MaxConn}",
+                    LogPrefix, job.Id, torrent.Name, torrent.Size / (1024.0 * 1024.0), downloadPath, manager.Settings.MaximumConnections);
 
-                // Check if job was in SYNCING state - handle separately
+                // Check if job was in SYNCING state - handle separately (before starting)
                 if (wasSyncing)
                 {
                     // Job was interrupted during sync phase, but torrent is loaded
                     Logger.LogInformation("{LogPrefix} Resuming from SYNCING state | JobId: {JobId}", LogPrefix, job.Id);
+                    
+                    // Start manager to load FastResume state
+                    await manager.StartAsync();
+                    
+                    // Wait for manager to fully initialize from FastResume
+                    await Task.Delay(1000, cancellationToken);
                     
                     // Check if torrent is already complete
                     if (manager.Progress >= 100.0 || manager.State == TorrentState.Seeding)
@@ -149,15 +146,34 @@ namespace TorreClou.Worker.Services
                         // Continue with normal download flow below
                     }
                 }
+                else
+                {
+                    // 6. Start downloading (for normal flow)
+                    await manager.StartAsync();
+                }
+                
+                // Wait for manager to fully initialize from FastResume after starting
+                await Task.Delay(1000, cancellationToken);
+                
+                // Read actual downloaded bytes from manager (from FastResume) AFTER starting
+                // StartAsync() loads FastResume, so we need to check after it completes
+                var actualDownloaded = manager.Monitor.DataBytesReceived;
+                if (actualDownloaded > 0 && actualDownloaded != job.BytesDownloaded)
+                {
+                    Logger.LogInformation("{LogPrefix} Resuming with actual progress | JobId: {JobId} | DB: {DbBytes} | Actual: {ActualBytes} | Progress: {Progress}%", 
+                        LogPrefix, job.Id, job.BytesDownloaded, actualDownloaded, manager.Progress);
+                    job.BytesDownloaded = actualDownloaded;
+                    await UnitOfWork.Complete();
+                }
+                else if (actualDownloaded == 0 && job.BytesDownloaded > 0)
+                {
+                    // Manager shows 0 but DB has progress - this shouldn't happen, but log it
+                    Logger.LogWarning("{LogPrefix} Manager shows 0 bytes but DB has {DbBytes} bytes | JobId: {JobId} | ManagerState: {State} | ManagerProgress: {Progress}%", 
+                        LogPrefix, job.BytesDownloaded, job.Id, manager.State, manager.Progress);
+                }
 
-                Logger.LogInformation(
-                    "{LogPrefix} Torrent loaded | JobId: {JobId} | Name: {Name} | Size: {SizeMB:F2} MB | Path: {Path} | MaxConnections: {MaxConn} | ResumedBytes: {ResumedBytes}",
-                    LogPrefix, job.Id, torrent.Name, torrent.Size / (1024.0 * 1024.0), downloadPath, manager.Settings.MaximumConnections, actualDownloaded);
-
-                // 6. Start downloading
-                await manager.StartAsync();
-                Logger.LogInformation("{LogPrefix} Download started | JobId: {JobId} | Initial State: {State}", 
-                    LogPrefix, job.Id, manager.State);
+                Logger.LogInformation("{LogPrefix} Download started | JobId: {JobId} | Initial State: {State} | ResumedBytes: {ResumedBytes} | Progress: {Progress}%", 
+                    LogPrefix, job.Id, manager.State, actualDownloaded, manager.Progress);
 
                 // 7. Monitor download progress
                 var success = await MonitorDownloadAsync(job, _engine, manager, cancellationToken);
