@@ -423,6 +423,8 @@ namespace TorreClou.Worker.Services
         /// <summary>
         /// Forces rclone to sync cached files to Backblaze B2.
         /// This ensures files are visible to the GoogleDrive upload worker which has its own rclone mount.
+        /// Note: With --vfs-cache-mode off, files are already written directly to B2, so this sync
+        /// is technically redundant but kept as a safety check to ensure files are fully uploaded.
         /// </summary>
         private async Task SyncToBackblazeAsync(UserJob job)
         {

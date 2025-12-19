@@ -16,11 +16,11 @@ EOF
     
     echo "[ENTRYPOINT] Mounting Backblaze B2 bucket: ${BACKBLAZE_BUCKET:-torrenclo}"
     
-    # Mount the bucket with write caching for torrent random writes
+    # Mount the bucket with cache mode off - files write directly to B2 without local caching
+    # This eliminates local disk usage entirely
     rclone mount backblaze:${BACKBLAZE_BUCKET:-torrenclo} /mnt/backblaze \
         --allow-other \
-        --vfs-cache-mode writes \
-        --vfs-write-back 5s \
+        --vfs-cache-mode off \
         --buffer-size 64M \
         --dir-cache-time 5m \
         --log-level INFO \
