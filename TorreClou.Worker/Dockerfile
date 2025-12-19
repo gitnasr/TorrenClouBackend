@@ -11,8 +11,11 @@ COPY TorreClou.API/TorreClou.API.csproj TorreClou.API/
 COPY TorreClou.Worker/TorreClou.Worker.csproj TorreClou.Worker/
 COPY TorreClou.GoogleDrive.Worker/TorreClou.GoogleDrive.Worker.csproj TorreClou.GoogleDrive.Worker/
 
-# Restore dependencies
-RUN dotnet restore TorreClou.sln
+# Restore dependencies for the Torrent Worker project
+# This will automatically restore all project dependencies
+WORKDIR /src/TorreClou.Worker
+RUN dotnet restore TorreClou.Worker.csproj
+WORKDIR /src
 
 # Copy all source code
 COPY TorreClou.Core/ TorreClou.Core/

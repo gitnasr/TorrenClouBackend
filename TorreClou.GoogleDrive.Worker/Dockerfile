@@ -11,8 +11,11 @@ COPY TorreClou.API/TorreClou.API.csproj TorreClou.API/
 COPY TorreClou.Worker/TorreClou.Worker.csproj TorreClou.Worker/
 COPY TorreClou.GoogleDrive.Worker/TorreClou.GoogleDrive.Worker.csproj TorreClou.GoogleDrive.Worker/
 
-# Restore dependencies
-RUN dotnet restore TorreClou.sln
+# Restore dependencies for the GoogleDrive Worker project
+# This will automatically restore all project dependencies
+WORKDIR /src/TorreClou.GoogleDrive.Worker
+RUN dotnet restore TorreClou.GoogleDrive.Worker.csproj
+WORKDIR /src
 
 # Copy all source code
 COPY TorreClou.Core/ TorreClou.Core/
@@ -22,10 +25,8 @@ COPY TorreClou.GoogleDrive.Worker/ TorreClou.GoogleDrive.Worker/
 
 # Build and publish
 WORKDIR /src/TorreClou.GoogleDrive.Worker
-# Restore again after copying source to ensure all dependencies are resolved
-RUN dotnet restore
-RUN dotnet build -c Release -o /app/build
-RUN dotnet publish -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet build -c Release --no-restore -o /app/build
+RUN dotnet publish -c Release --no-restore -o /app/publish /p:UseAppHost=false
 
 # Stage 2: Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
