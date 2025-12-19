@@ -53,4 +53,12 @@
         CopyrightInfringement,
         Other
     }
+
+    public enum SyncProgressStatus
+    {
+        NotStarted,
+        InProgress,
+        Completed,
+        Failed
+    }
 }

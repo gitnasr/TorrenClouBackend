@@ -29,6 +29,8 @@ namespace TorreClou.Infrastructure.Extensions
             // Backblaze B2 Storage
             services.Configure<BackblazeSettings>(configuration.GetSection("Backblaze"));
             services.AddSingleton<IBlobStorageService, BackblazeStorageService>();
+            services.AddScoped<IS3ResumableUploadService, S3ResumableUploadService>();
+            services.AddScoped<IS3FileDownloadService, S3FileDownloadService>();
 
             // Redis
             var redisSettings = configuration.GetSection("Redis").Get<RedisSettings>() ?? new RedisSettings();

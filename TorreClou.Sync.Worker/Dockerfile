@@ -7,9 +7,7 @@ COPY TorreClou.sln .
 COPY TorreClou.Core/TorreClou.Core.csproj TorreClou.Core/
 COPY TorreClou.Application/TorreClou.Application.csproj TorreClou.Application/
 COPY TorreClou.Infrastructure/TorreClou.Infrastructure.csproj TorreClou.Infrastructure/
-COPY TorreClou.API/TorreClou.API.csproj TorreClou.API/
-COPY TorreClou.Worker/TorreClou.Worker.csproj TorreClou.Worker/
-COPY TorreClou.GoogleDrive.Worker/TorreClou.GoogleDrive.Worker.csproj TorreClou.GoogleDrive.Worker/
+COPY TorreClou.Sync.Worker/TorreClou.Sync.Worker.csproj TorreClou.Sync.Worker/
 
 # Restore dependencies
 RUN dotnet restore TorreClou.sln
@@ -18,10 +16,10 @@ RUN dotnet restore TorreClou.sln
 COPY TorreClou.Core/ TorreClou.Core/
 COPY TorreClou.Application/ TorreClou.Application/
 COPY TorreClou.Infrastructure/ TorreClou.Infrastructure/
-COPY TorreClou.Worker/ TorreClou.Worker/
+COPY TorreClou.Sync.Worker/ TorreClou.Sync.Worker/
 
 # Build and publish
-WORKDIR /src/TorreClou.Worker
+WORKDIR /src/TorreClou.Sync.Worker
 RUN dotnet build -c Release --no-restore -o /app/build
 RUN dotnet publish -c Release --no-restore -o /app/publish /p:UseAppHost=false
 
@@ -39,15 +37,15 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 COPY --from=build /app/publish .
 
 # Copy entrypoint script
-COPY TorreClou.Worker/entrypoint.sh /entrypoint.sh
+COPY TorreClou.Sync.Worker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Set environment variables
 ENV ASPNETCORE_ENVIRONMENT=Production
 
 # Change ownership to non-root user
-RUN chown -R appuser:appuser /app /mnt/backblaze /mnt/torrents
-
+RUN chown -R appuser:appuser /app /mnt/torrents
 
 # Set entry point
 ENTRYPOINT ["/entrypoint.sh"]
+

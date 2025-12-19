@@ -99,43 +99,23 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 return;
             }
 
-            // Construct full path if using relative path format (torrents/{jobId})
-            // If path doesn't start with mount path, assume it's relative and combine with mount path
-            string fullDownloadPath = job.DownloadPath;
-            if (_backblazeSettings.UseFuseMount && 
-                !string.IsNullOrEmpty(_backblazeSettings.MountPath))
+            // DownloadPath is the block storage path (e.g., "/mnt/torrents/{jobId}")
+            // Read files directly from block storage
+            if (string.IsNullOrEmpty(job.DownloadPath))
             {
-                // If path is already absolute and starts with mount path, use as-is
-                if (job.DownloadPath.StartsWith(_backblazeSettings.MountPath, StringComparison.OrdinalIgnoreCase))
-                {
-                    fullDownloadPath = job.DownloadPath;
-                }
-                else
-                {
-                    // Path is relative (e.g., "torrents/{jobId}"), combine with mount path
-                    fullDownloadPath = Path.Combine(_backblazeSettings.MountPath, job.DownloadPath);
-                }
-
-                // Validate mount point exists
-                if (!Directory.Exists(_backblazeSettings.MountPath))
-                {
-                    await MarkJobFailedAsync(job, $"Backblaze mount point {_backblazeSettings.MountPath} not found. Ensure rclone mount is running.");
-                    return;
-                }
-
-                Logger.LogInformation("{LogPrefix} Using Backblaze mount | JobId: {JobId} | MountPath: {MountPath} | DownloadPath: {DownloadPath} | FullPath: {FullPath}",
-                    LogPrefix, job.Id, _backblazeSettings.MountPath, job.DownloadPath, fullDownloadPath);
+                await MarkJobFailedAsync(job, "Download path is not set.");
+                return;
             }
-
-            // Update job download path to full path for rest of processing
-            job.DownloadPath = fullDownloadPath;
 
             // Validate download path exists
             if (!Directory.Exists(job.DownloadPath))
             {
-                await MarkJobFailedAsync(job, $"Download path {job.DownloadPath} not found. Files may have been deleted or not synced to mount.");
+                await MarkJobFailedAsync(job, $"Download path {job.DownloadPath} not found. Files may not be ready yet.");
                 return;
             }
+
+            Logger.LogInformation("{LogPrefix} Reading files from block storage | JobId: {JobId} | Path: {Path}",
+                LogPrefix, job.Id, job.DownloadPath);
 
             // 5. Validate storage profile
             if (job.StorageProfile == null)
@@ -162,11 +142,10 @@ namespace TorreClou.GoogleDrive.Worker.Services
             var accessToken = tokenResult.Value;
 
             // 7. Get files to upload (excluding .dht, .fresume, .torrent files)
-            // Wait for files to appear (for FUSE mount sync delays)
-            var filesToUpload = await WaitForFilesAsync(job, job.DownloadPath, cancellationToken);
+            var filesToUpload = GetFilesToUpload(job.DownloadPath);
             if (filesToUpload.Length == 0)
             {
-                await MarkJobFailedAsync(job, $"No files found in download path {job.DownloadPath} after waiting 2 hours. Directory exists: {Directory.Exists(job.DownloadPath)}");
+                await MarkJobFailedAsync(job, $"No files found in download path {job.DownloadPath}. Directory exists: {Directory.Exists(job.DownloadPath)}");
                 return;
             }
 
@@ -233,133 +212,18 @@ namespace TorreClou.GoogleDrive.Worker.Services
 
             Logger.LogInformation("{LogPrefix} Job completed successfully | JobId: {JobId} | Files: {Files}", 
                 LogPrefix, job.Id, uploadResult.TotalFiles);
+
+            // Note: Do NOT cleanup block storage here - S3SyncJob handles cleanup after sync completes
         }
 
         /// <summary>
-        /// Waits for files to appear in the download path with extended retry strategy:
-        /// - Phase 1: Retry every 20 seconds for 1 hour (180 retries)
-        /// - Phase 2: Retry every 10 minutes for 1 hour (6 retries)
-        /// - After 2 hours total: Return empty array to trigger failure
-        /// This handles FUSE mount sync delays where files might not be immediately visible.
-        /// Uses job.StartedAt to track total elapsed time across worker restarts for proper recovery.
+        /// Gets files to upload from the download path (excluding metadata files).
         /// </summary>
-        private async Task<FileInfo[]> WaitForFilesAsync(UserJob job, string downloadPath, CancellationToken cancellationToken)
-        {
-            const int phase1IntervalSeconds = 20;  // 20 seconds
-            const int phase2IntervalSeconds = 600; // 10 minutes
-            const int phase1DurationSeconds = 3600; // 1 hour
-            const int totalDurationSeconds = 7200;   // 2 hours total
-
-            // Use StartedAt as baseline for recovery - if job was restarted, this preserves elapsed time
-            var baselineTime = job.StartedAt ?? DateTime.UtcNow;
-            var attemptCount = 0;
-            var lastPhase = 0; // Track phase transitions for logging
-
-            Logger.LogInformation("{LogPrefix} Starting file wait with extended retry | JobId: {JobId} | Path: {Path} | Baseline: {Baseline}", 
-                LogPrefix, job.Id, downloadPath, baselineTime);
-
-            // IMMEDIATE CHECK: Don't wait before first check - files might already be there
-            var immediateFiles = GetFilesToUpload(downloadPath);
-            if (immediateFiles.Length > 0)
-            {
-                Logger.LogInformation("{LogPrefix} Files found immediately (no wait needed) | JobId: {JobId} | Count: {Count}", 
-                    LogPrefix, job.Id, immediateFiles.Length);
-                return immediateFiles;
-            }
-
-            // If no files found immediately, start retry loop
-            while (true)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    Logger.LogWarning("{LogPrefix} File wait cancelled | JobId: {JobId}", LogPrefix, job.Id);
-                    break;
-                }
-
-                var elapsed = DateTime.UtcNow - baselineTime;
-                
-                // Check if we've exceeded total duration
-                if (elapsed.TotalSeconds >= totalDurationSeconds)
-                {
-                    Logger.LogError("{LogPrefix} File wait timeout after {ElapsedMinutes:F1} minutes | JobId: {JobId} | Path: {Path}", 
-                        LogPrefix, elapsed.TotalMinutes, job.Id, downloadPath);
-                    return GetFilesToUpload(downloadPath); // Return empty or whatever is found
-                }
-
-                // Check for files
-                var files = GetFilesToUpload(downloadPath);
-                attemptCount++;
-
-                if (files.Length > 0)
-                {
-                    if (attemptCount > 1)
-                    {
-                        Logger.LogInformation("{LogPrefix} Files found after {ElapsedMinutes:F1} minutes ({Attempt} attempts) | JobId: {JobId} | Count: {Count}", 
-                            LogPrefix, elapsed.TotalMinutes, attemptCount, job.Id, files.Length);
-                    }
-                    return files;
-                }
-
-                // Determine current phase and wait interval
-                int waitIntervalSeconds;
-                string phaseDescription;
-                string statusMessage;
-
-                if (elapsed.TotalSeconds < phase1DurationSeconds)
-                {
-                    // Phase 1: Retry every 20 seconds
-                    waitIntervalSeconds = phase1IntervalSeconds;
-                    phaseDescription = "Phase 1 (20s intervals)";
-                    statusMessage = $"Waiting for files to sync (retrying every 20s)... Elapsed: {elapsed.TotalMinutes:F1} min";
-                    
-                    if (lastPhase != 1)
-                    {
-                        Logger.LogInformation("{LogPrefix} Entering Phase 1: Retrying every 20 seconds for up to 1 hour | JobId: {JobId}", 
-                            LogPrefix, job.Id);
-                        lastPhase = 1;
-                    }
-                }
-                else
-                {
-                    // Phase 2: Retry every 10 minutes
-                    waitIntervalSeconds = phase2IntervalSeconds;
-                    phaseDescription = "Phase 2 (10min intervals)";
-                    statusMessage = $"Waiting for files to sync (retrying every 10min)... Elapsed: {elapsed.TotalMinutes:F1} min";
-                    
-                    if (lastPhase != 2)
-                    {
-                        Logger.LogInformation("{LogPrefix} Entering Phase 2: Retrying every 10 minutes for up to 1 hour | JobId: {JobId} | Elapsed: {ElapsedMinutes:F1} min", 
-                            LogPrefix, job.Id, elapsed.TotalMinutes);
-                        lastPhase = 2;
-                    }
-                }
-
-                // Update job heartbeat and status
-               
-                    job.CurrentState = statusMessage;
-                    job.LastHeartbeat = DateTime.UtcNow;
-                    await UnitOfWork.Complete();
-               
-
-                // Log retry attempt
-                Logger.LogCritical("{LogPrefix} No files found, waiting {Interval}s before retry | JobId: {JobId} | {Phase} | Attempt: {Attempt} | Elapsed: {ElapsedMinutes:F1} min | Path: {Path}", 
-                    LogPrefix, waitIntervalSeconds, job.Id, phaseDescription, attemptCount, elapsed.TotalMinutes, downloadPath);
-
-                // Wait before next retry
-                await Task.Delay(TimeSpan.FromSeconds(waitIntervalSeconds), cancellationToken);
-            }
-
-            // If we exit the loop (cancellation), return whatever we find
-            return GetFilesToUpload(downloadPath);
-        }
-
         private FileInfo[] GetFilesToUpload(string downloadPath)
         {
             try
             {
                 var directory = new DirectoryInfo(downloadPath);
-
-                // Force refresh to get latest directory state (important for FUSE mounts)
                 directory.Refresh();
 
                 if (!directory.Exists)
@@ -369,7 +233,6 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 }
 
                 // Get all files excluding MonoTorrent metadata files and .dht files
-                // Use try-catch around GetFiles to handle FUSE mount sync issues gracefully
                 FileInfo[] allFiles;
                 try
                 {
@@ -377,21 +240,19 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 }
                 catch (UnauthorizedAccessException ex)
                 {
-                    // Some files/directories might not be accessible yet on FUSE mount during sync
-                    Logger.LogWarning(ex, "{LogPrefix} UnauthorizedAccessException while getting files (FUSE mount may be syncing) | Path: {Path}", 
+                    Logger.LogWarning(ex, "{LogPrefix} UnauthorizedAccessException while getting files | Path: {Path}", 
                         LogPrefix, downloadPath);
                     return [];
                 }
                 catch (DirectoryNotFoundException ex)
                 {
-                    // Directory might have been removed or not fully synced yet
-                    Logger.LogWarning(ex, "{LogPrefix} DirectoryNotFoundException (directory may not be fully synced) | Path: {Path}", 
+                    Logger.LogWarning(ex, "{LogPrefix} DirectoryNotFoundException | Path: {Path}", 
                         LogPrefix, downloadPath);
                     return [];
                 }
 
                 var files = allFiles
-                    .Where(f => f.Exists && // Ensure file still exists (FUSE mount might have stale entries)
+                    .Where(f => f.Exists &&
                                !f.Name.EndsWith(".fresume", StringComparison.OrdinalIgnoreCase) &&
                                !f.Name.EndsWith(".dht", StringComparison.OrdinalIgnoreCase) &&
                                !f.Name.EndsWith(".torrent", StringComparison.OrdinalIgnoreCase) &&
