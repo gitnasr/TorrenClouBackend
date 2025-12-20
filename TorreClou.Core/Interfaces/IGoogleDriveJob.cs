@@ -47,6 +47,17 @@ namespace TorreClou.Core.Interfaces
         /// <param name="cancellationToken">Cancellation token</param>
         /// <returns>The number of bytes uploaded (0 if none, fileSize if complete)</returns>
         Task<Result<long>> QueryUploadStatusAsync(string resumeUri, long fileSize, string accessToken, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Checks if a file with the given name already exists in the specified Google Drive folder.
+        /// Used as a fallback to verify file existence when Redis state is unavailable.
+        /// </summary>
+        /// <param name="folderId">Google Drive folder ID to search in</param>
+        /// <param name="fileName">Name of the file to search for</param>
+        /// <param name="accessToken">OAuth access token</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>The Google Drive file ID if the file exists, null if not found</returns>
+        Task<Result<string?>> CheckFileExistsAsync(string folderId, string fileName, string accessToken, CancellationToken cancellationToken = default);
     }
 }
 

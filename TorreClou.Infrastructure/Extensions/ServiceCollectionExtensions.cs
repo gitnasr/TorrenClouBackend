@@ -38,6 +38,11 @@ namespace TorreClou.Infrastructure.Extensions
                 ConnectionMultiplexer.Connect(redisSettings.ConnectionString)
             );
 
+            // Redis Services
+            services.AddSingleton<IRedisCacheService, RedisCacheService>();
+            services.AddScoped<IRedisLockService, RedisLockService>();
+            services.AddSingleton<IRedisStreamService, RedisStreamService>();
+
             services.AddScoped<ITokenService, TokenService>();
 
             // Google Drive Services

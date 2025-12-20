@@ -1,5 +1,4 @@
 using System.Text.Json;
-using StackExchange.Redis;
 using TorreClou.Core.DTOs.Common;
 using TorreClou.Core.DTOs.Jobs;
 using TorreClou.Core.Entities.Jobs;
@@ -13,7 +12,7 @@ namespace TorreClou.Application.Services
 {
     public class JobService(
         IUnitOfWork unitOfWork,
-        IConnectionMultiplexer redis) : IJobService
+        IRedisStreamService redisStreamService) : IJobService
     {
         private const string JobStreamKey = "jobs:stream";
 
@@ -98,13 +97,13 @@ namespace TorreClou.Application.Services
             await unitOfWork.Complete();
 
             // 6. Publish to Redis Stream (guaranteed delivery)
-            var db = redis.GetDatabase();
-            await db.StreamAddAsync(JobStreamKey, [
-                new NameValueEntry("jobId", job.Id.ToString()),
-                new NameValueEntry("userId", userId.ToString()),
-                new NameValueEntry("jobType", job.Type.ToString()),
-                new NameValueEntry("createdAt", DateTime.UtcNow.ToString("O"))
-            ]);
+            await redisStreamService.PublishAsync(JobStreamKey, new Dictionary<string, string>
+            {
+                { "jobId", job.Id.ToString() },
+                { "userId", userId.ToString() },
+                { "jobType", job.Type.ToString() },
+                { "createdAt", DateTime.UtcNow.ToString("O") }
+            });
 
             return Result.Success(new JobCreationResult
             {

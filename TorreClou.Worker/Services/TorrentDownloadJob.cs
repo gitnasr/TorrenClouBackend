@@ -10,7 +10,6 @@ using Hangfire;
 using TorreClou.Infrastructure.Workers;
 using TorreClou.Infrastructure.Services;
 using TorreClou.Infrastructure.Settings;
-using StackExchange.Redis;
 using System.Diagnostics;
 
 namespace TorreClou.Worker.Services
@@ -23,7 +22,7 @@ namespace TorreClou.Worker.Services
         IUnitOfWork unitOfWork,
         IHttpClientFactory httpClientFactory,
         ILogger<TorrentDownloadJob> logger,
-        IConnectionMultiplexer redis,
+        IRedisStreamService redisStreamService,
         ITransferSpeedMetrics speedMetrics,
         IOptions<BackblazeSettings> backblazeSettings) : BaseJob<TorrentDownloadJob>(unitOfWork, logger)
     {
@@ -432,17 +431,16 @@ namespace TorreClou.Worker.Services
                 Logger.LogInformation("{LogPrefix} Publishing to upload stream | JobId: {JobId} | Provider: {Provider}", 
                     LogPrefix, job.Id, job.StorageProfile?.ProviderType);
 
-                var db = redis.GetDatabase();
-
                 // Publish to upload stream for Google Drive worker (sync will be triggered after upload completes)
                 var uploadStreamKey = GetUploadStreamKey(job.StorageProfile?.ProviderType ?? StorageProviderType.GoogleDrive);
-                await db.StreamAddAsync(uploadStreamKey, [
-                    new NameValueEntry("jobId", job.Id.ToString()),
-                    new NameValueEntry("downloadPath", job.DownloadPath ?? string.Empty),
-                    new NameValueEntry("storageProfileId", job.StorageProfileId.ToString()),
-                    new NameValueEntry("userId", job.UserId.ToString()),
-                    new NameValueEntry("createdAt", DateTime.UtcNow.ToString("O"))
-                ]);
+                await redisStreamService.PublishAsync(uploadStreamKey, new Dictionary<string, string>
+                {
+                    { "jobId", job.Id.ToString() },
+                    { "downloadPath", job.DownloadPath ?? string.Empty },
+                    { "storageProfileId", job.StorageProfileId.ToString() },
+                    { "userId", job.UserId.ToString() },
+                    { "createdAt", DateTime.UtcNow.ToString("O") }
+                });
 
                 Logger.LogInformation("{LogPrefix} Published to upload stream | JobId: {JobId} | Stream: {Stream}", 
                     LogPrefix, job.Id, uploadStreamKey);

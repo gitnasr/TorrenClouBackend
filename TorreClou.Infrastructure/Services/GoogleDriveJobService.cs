@@ -476,6 +476,49 @@ namespace TorreClou.Infrastructure.Services
             return Result<string>.Failure("UPLOAD_INCOMPLETE", "Upload did not complete successfully");
         }
 
+        public async Task<Result<string?>> CheckFileExistsAsync(string folderId, string fileName, string accessToken, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var httpClient = httpClientFactory.CreateClient();
+                httpClient.Timeout = TimeSpan.FromMinutes(1);
+                httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+                // Escape single quotes in fileName for the query
+                var escapedFileName = fileName.Replace("'", "\\'");
+                var query = $"name='{escapedFileName}' and '{folderId}' in parents and trashed=false";
+                var url = $"https://www.googleapis.com/drive/v3/files?q={Uri.EscapeDataString(query)}&fields=files(id,name)&pageSize=1";
+
+                var response = await httpClient.GetAsync(url, cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                    logger.LogWarning("Failed to check file existence: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                    return Result<string?>.Failure("CHECK_FAILED", $"Failed to check file existence: {errorContent}");
+                }
+
+                var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
+                var fileListResponse = JsonSerializer.Deserialize<FileListResponse>(responseJson);
+
+                if (fileListResponse?.Files != null && fileListResponse.Files.Length > 0)
+                {
+                    var fileId = fileListResponse.Files[0].Id;
+                    logger.LogInformation("File exists in Google Drive | FileName: {FileName} | FolderId: {FolderId} | FileId: {FileId}",
+                        fileName, folderId, fileId);
+                    return Result.Success<string?>(fileId);
+                }
+
+                logger.LogDebug("File does not exist in Google Drive | FileName: {FileName} | FolderId: {FolderId}", fileName, folderId);
+                return Result.Success<string?>(null);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Exception checking file existence: {FileName}", fileName);
+                return Result<string?>.Failure("CHECK_ERROR", $"Error checking file existence: {ex.Message}");
+            }
+        }
+
         private static string GetMimeType(string fileName)
         {
             var extension = Path.GetExtension(fileName).ToLowerInvariant();

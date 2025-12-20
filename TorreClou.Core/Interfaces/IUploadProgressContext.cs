@@ -64,5 +64,42 @@ namespace TorreClou.Core.Interfaces
         /// Gets whether the context has been configured.
         /// </summary>
         bool IsConfigured { get; }
+
+        /// <summary>
+        /// Stores a completed file mapping (relativePath → driveFileId) in Redis.
+        /// Used to track which files have been successfully uploaded to prevent duplicates on restart.
+        /// </summary>
+        /// <param name="relativePath">Relative path of the file within the download folder</param>
+        /// <param name="driveFileId">The Google Drive file ID returned after successful upload</param>
+        Task SetCompletedFileAsync(string relativePath, string driveFileId);
+
+        /// <summary>
+        /// Gets the Google Drive file ID for a completed file, if it was previously uploaded.
+        /// </summary>
+        /// <param name="relativePath">Relative path of the file within the download folder</param>
+        /// <returns>The Google Drive file ID if the file was already uploaded, null otherwise</returns>
+        Task<string?> GetCompletedFileAsync(string relativePath);
+
+        /// <summary>
+        /// Stores the root folder ID for a job in Redis.
+        /// Used to reuse the same folder when a job restarts.
+        /// </summary>
+        /// <param name="jobId">The job ID</param>
+        /// <param name="folderId">The Google Drive root folder ID</param>
+        Task SetRootFolderIdAsync(int jobId, string folderId);
+
+        /// <summary>
+        /// Gets the root folder ID for a job, if it was previously created.
+        /// </summary>
+        /// <param name="jobId">The job ID</param>
+        /// <returns>The Google Drive root folder ID if it exists, null otherwise</returns>
+        Task<string?> GetRootFolderIdAsync(int jobId);
+
+        /// <summary>
+        /// Clears all job state from Redis (completed files, root folder, resume URIs).
+        /// Should be called when a job completes successfully or is cancelled.
+        /// </summary>
+        /// <param name="jobId">The job ID</param>
+        Task ClearJobStateAsync(int jobId);
     }
 }

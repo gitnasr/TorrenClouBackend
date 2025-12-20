@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using StackExchange.Redis;
 using TorreClou.Core.Interfaces;
 
 namespace TorreClou.Infrastructure.Services
@@ -10,12 +9,14 @@ namespace TorreClou.Infrastructure.Services
     /// </summary>
     public class UploadProgressContext : IUploadProgressContext
     {
-        private readonly IConnectionMultiplexer _redis;
+        private readonly IRedisCacheService _redisCache;
 
         // Throttling constants
         private static readonly TimeSpan LogInterval = TimeSpan.FromSeconds(30);
         private const double DbUpdateThresholdPercent = 5.0;
         private static readonly TimeSpan ResumeUriTtl = TimeSpan.FromDays(7);
+        private static readonly TimeSpan CompletedFileTtl = TimeSpan.FromDays(30);
+        private static readonly TimeSpan RootFolderTtl = TimeSpan.FromDays(30);
 
         // Throttling state
         private double _lastDbPercent = 0;
@@ -31,9 +32,9 @@ namespace TorreClou.Infrastructure.Services
 
         public bool IsConfigured => _isConfigured;
 
-        public UploadProgressContext(IConnectionMultiplexer redis)
+        public UploadProgressContext(IRedisCacheService redisCache)
         {
-            _redis = redis;
+            _redisCache = redisCache;
         }
 
         public void Configure(int jobId, long totalBytes, ILogger logger, Func<string, double, Task> onDbUpdate)
@@ -132,17 +133,16 @@ namespace TorreClou.Infrastructure.Services
                 throw new InvalidOperationException("UploadProgressContext must be configured before accessing resume URIs.");
             }
 
-            var db = _redis.GetDatabase();
             var key = GetResumeKey(relativePath);
-            var value = await db.StringGetAsync(key);
+            var value = await _redisCache.GetAsync(key);
 
-            if (value.HasValue)
+            if (value != null)
             {
                 _logger?.LogInformation("[UPLOAD_RESUME] Found resume URI | JobId: {JobId} | Path: {Path}",
                     _jobId, relativePath);
             }
 
-            return value.HasValue ? value.ToString() : null;
+            return value;
         }
 
         public async Task SetResumeUriAsync(string relativePath, string resumeUri)
@@ -152,9 +152,8 @@ namespace TorreClou.Infrastructure.Services
                 throw new InvalidOperationException("UploadProgressContext must be configured before setting resume URIs.");
             }
 
-            var db = _redis.GetDatabase();
             var key = GetResumeKey(relativePath);
-            await db.StringSetAsync(key, resumeUri, ResumeUriTtl);
+            await _redisCache.SetAsync(key, resumeUri, ResumeUriTtl);
 
             _logger?.LogDebug("[UPLOAD_RESUME] Cached resume URI | JobId: {JobId} | Path: {Path} | TTL: {TTL}",
                 _jobId, relativePath, ResumeUriTtl);
@@ -167,12 +166,80 @@ namespace TorreClou.Infrastructure.Services
                 throw new InvalidOperationException("UploadProgressContext must be configured before clearing resume URIs.");
             }
 
-            var db = _redis.GetDatabase();
             var key = GetResumeKey(relativePath);
-            await db.KeyDeleteAsync(key);
+            await _redisCache.DeleteAsync(key);
 
             _logger?.LogDebug("[UPLOAD_RESUME] Cleared resume URI | JobId: {JobId} | Path: {Path}",
                 _jobId, relativePath);
+        }
+
+        public async Task SetCompletedFileAsync(string relativePath, string driveFileId)
+        {
+            if (!_isConfigured)
+            {
+                throw new InvalidOperationException("UploadProgressContext must be configured before setting completed files.");
+            }
+
+            var key = GetCompletedFileKey(relativePath);
+            await _redisCache.SetAsync(key, driveFileId, CompletedFileTtl);
+
+            _logger?.LogDebug("[UPLOAD_COMPLETED] Cached completed file | JobId: {JobId} | Path: {Path} | FileId: {FileId} | TTL: {TTL}",
+                _jobId, relativePath, driveFileId, CompletedFileTtl);
+        }
+
+        public async Task<string?> GetCompletedFileAsync(string relativePath)
+        {
+            if (!_isConfigured)
+            {
+                throw new InvalidOperationException("UploadProgressContext must be configured before accessing completed files.");
+            }
+
+            var key = GetCompletedFileKey(relativePath);
+            var value = await _redisCache.GetAsync(key);
+
+            if (value != null)
+            {
+                _logger?.LogInformation("[UPLOAD_COMPLETED] Found completed file | JobId: {JobId} | Path: {Path} | FileId: {FileId}",
+                    _jobId, relativePath, value);
+            }
+
+            return value;
+        }
+
+        public async Task SetRootFolderIdAsync(int jobId, string folderId)
+        {
+            var key = GetRootFolderKey(jobId);
+            await _redisCache.SetAsync(key, folderId, RootFolderTtl);
+
+            _logger?.LogInformation("[UPLOAD_ROOT_FOLDER] Cached root folder ID | JobId: {JobId} | FolderId: {FolderId} | TTL: {TTL}",
+                jobId, folderId, RootFolderTtl);
+        }
+
+        public async Task<string?> GetRootFolderIdAsync(int jobId)
+        {
+            var key = GetRootFolderKey(jobId);
+            var value = await _redisCache.GetAsync(key);
+
+            if (value != null)
+            {
+                _logger?.LogInformation("[UPLOAD_ROOT_FOLDER] Found root folder ID | JobId: {JobId} | FolderId: {FolderId}",
+                    jobId, value);
+            }
+
+            return value;
+        }
+
+        public async Task ClearJobStateAsync(int jobId)
+        {
+            // Clear root folder
+            var rootFolderKey = GetRootFolderKey(jobId);
+            await _redisCache.DeleteAsync(rootFolderKey);
+
+            // Note: We don't clear individual completed files or resume URIs here
+            // They will expire naturally with their TTL (30 days for completed files, 7 days for resume URIs)
+            // This allows for recovery scenarios even after job completion
+
+            _logger?.LogInformation("[UPLOAD_CLEANUP] Cleared root folder ID | JobId: {JobId}", jobId);
         }
 
         private string GetResumeKey(string relativePath)
@@ -189,6 +256,27 @@ namespace TorreClou.Infrastructure.Services
             }
 
             return $"gdrive:resume:{_jobId}:{sanitizedPath}";
+        }
+
+        private string GetCompletedFileKey(string relativePath)
+        {
+            // Sanitize path for Redis key (replace backslashes, limit length)
+            var sanitizedPath = relativePath.Replace('\\', '/');
+            
+            // If path is too long, use a hash
+            if (sanitizedPath.Length > 200)
+            {
+                sanitizedPath = Convert.ToBase64String(
+                    System.Security.Cryptography.SHA256.HashData(
+                        System.Text.Encoding.UTF8.GetBytes(relativePath)))[..32];
+            }
+
+            return $"gdrive:completed:{_jobId}:{sanitizedPath}";
+        }
+
+        private static string GetRootFolderKey(int jobId)
+        {
+            return $"gdrive:rootfolder:{jobId}";
         }
     }
 }

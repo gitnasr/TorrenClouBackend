@@ -4,7 +4,6 @@ using System.Text.Json;
 using System.Web;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
-using StackExchange.Redis;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
@@ -19,7 +18,7 @@ namespace TorreClou.Application.Services
         IOptions<GoogleDriveSettings> settings,
         IHttpClientFactory httpClientFactory,
         ILogger<GoogleDriveAuthService> logger,
-        IConnectionMultiplexer redis) : IGoogleDriveAuthService
+        IRedisCacheService redisCache) : IGoogleDriveAuthService
     {
         private readonly GoogleDriveSettings _settings = settings.Value;
         private const string RedisKeyPrefix = "oauth:state:";
@@ -55,10 +54,8 @@ namespace TorreClou.Application.Services
 
                 var redisKey = $"{RedisKeyPrefix}{stateHash}";
                 var jsonValue = JsonSerializer.Serialize(oauthState);
-                var db = redis.GetDatabase();
-
-               
-                    await db.StringSetAsync(redisKey, jsonValue, TimeSpan.FromMinutes(5));
+                
+                await redisCache.SetAsync(redisKey, jsonValue, TimeSpan.FromMinutes(5));
               
            
 
@@ -91,20 +88,19 @@ namespace TorreClou.Application.Services
             {
                 // Retrieve and delete state from Redis (atomic operation ensures single-use)
                 var redisKey = $"{RedisKeyPrefix}{state}";
-                var db = redis.GetDatabase();
                 
                 OAuthState? storedState;
                 try
                 {
                     // Atomic get-and-delete operation
-                    var stateJson = await db.StringGetDeleteAsync(redisKey);
+                    var stateJson = await redisCache.GetAndDeleteAsync(redisKey);
                     
-                    if (!stateJson.HasValue)
+                    if (string.IsNullOrEmpty(stateJson))
                     {
                         return Result<int>.Failure("INVALID_STATE", "Invalid or expired OAuth state");
                     }
 
-                    storedState = JsonSerializer.Deserialize<OAuthState>(stateJson!);
+                    storedState = JsonSerializer.Deserialize<OAuthState>(stateJson);
                     
                     if (storedState == null)
                     {

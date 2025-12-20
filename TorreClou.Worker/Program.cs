@@ -131,6 +131,11 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(
     ConnectionMultiplexer.Connect(redisConnectionString)
 );
 
+// Redis Services
+builder.Services.AddSingleton<IRedisCacheService, RedisCacheService>();
+builder.Services.AddScoped<IRedisLockService, RedisLockService>();
+builder.Services.AddSingleton<IRedisStreamService, RedisStreamService>();
+
 // Job Health Monitor Configuration
 builder.Services.Configure<JobHealthMonitorOptions>(options =>
 {

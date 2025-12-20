@@ -8,7 +8,6 @@ using TorreClou.Infrastructure.Workers;
 using TorreClou.Infrastructure.Services;
 using TorreClou.Infrastructure.Settings;
 using Microsoft.Extensions.Options;
-using StackExchange.Redis;
 using SyncEntity = TorreClou.Core.Entities.Jobs.Sync;
 
 namespace TorreClou.GoogleDrive.Worker.Services
@@ -24,7 +23,8 @@ namespace TorreClou.GoogleDrive.Worker.Services
         IUploadProgressContext progressContext,
         ITransferSpeedMetrics speedMetrics,
         IOptions<BackblazeSettings> backblazeSettings,
-        IConnectionMultiplexer redis) : BaseJob<GoogleDriveUploadJob>(unitOfWork, logger)
+        IRedisLockService redisLockService,
+        IRedisStreamService redisStreamService) : BaseJob<GoogleDriveUploadJob>(unitOfWork, logger)
     {
         private readonly BackblazeSettings _backblazeSettings = backblazeSettings.Value;
 
@@ -45,8 +45,25 @@ namespace TorreClou.GoogleDrive.Worker.Services
 
         protected override async Task ExecuteCoreAsync(UserJob job, CancellationToken cancellationToken)
         {
-            // Handle job status transitions for business logic
-            if (job.Status == JobStatus.PENDING_UPLOAD)
+            // Acquire Redis lock to prevent concurrent execution of the same job
+            var lockKey = $"gdrive:lock:{job.Id}";
+            var lockExpiry = TimeSpan.FromMinutes(10); // 10 minutes - allows faster recovery if worker crashes
+            
+            using var distributedLock = await redisLockService.AcquireLockAsync(lockKey, lockExpiry, cancellationToken);
+            
+            if (distributedLock == null)
+            {
+                Logger.LogWarning("{LogPrefix} Job is already being processed by another instance | JobId: {JobId}", 
+                    LogPrefix, job.Id);
+                return; // Exit gracefully - another instance is handling this job
+            }
+
+            Logger.LogInformation("{LogPrefix} Acquired Redis lock | JobId: {JobId} | Expiry: {Expiry}",
+                LogPrefix, job.Id, lockExpiry);
+
+           
+                // Handle job status transitions for business logic
+                if (job.Status == JobStatus.PENDING_UPLOAD)
             {
                 // Job just completed download - transition to UPLOADING
                 Logger.LogInformation("{LogPrefix} Job ready for upload, transitioning to UPLOADING | JobId: {JobId}", 
@@ -169,28 +186,70 @@ namespace TorreClou.GoogleDrive.Worker.Services
                     await UnitOfWork.Complete();
                 });
 
-            // 9. Create root folder in Google Drive (idempotent - will create new folder each time)
-            await UpdateHeartbeatAsync(job, "Creating folder in Google Drive...");
-            var parentFolder = $"Torrent_{job.Id}_{DateTime.UtcNow:yyyyMMdd_HHmmss}";
-            var folderResult = await googleDriveService.CreateFolderAsync(parentFolder, null, accessToken, cancellationToken);
-            if (folderResult.IsFailure)
+            // 9. Check for existing root folder in Redis, or create new one
+            await UpdateHeartbeatAsync(job, "Checking for existing folder in Google Drive...");
+            var rootFolderId = await progressContext.GetRootFolderIdAsync(job.Id);
+            
+            if (string.IsNullOrEmpty(rootFolderId))
             {
-                await MarkJobFailedAsync(job, $"Failed to create folder: {folderResult.Error.Message}");
-                return;
+                // No existing folder found, create a new one
+                await UpdateHeartbeatAsync(job, "Creating folder in Google Drive...");
+                var parentFolder = $"Torrent_{job.Id}_{DateTime.UtcNow:yyyyMMdd_HHmmss}";
+                var folderResult = await googleDriveService.CreateFolderAsync(parentFolder, null, accessToken, cancellationToken);
+                if (folderResult.IsFailure)
+                {
+                    await MarkJobFailedAsync(job, $"Failed to create folder: {folderResult.Error.Message}");
+                    return;
+                }
+
+                rootFolderId = folderResult.Value;
+                await progressContext.SetRootFolderIdAsync(job.Id, rootFolderId);
+                Logger.LogInformation("{LogPrefix} Created root folder | JobId: {JobId} | FolderId: {FolderId}", 
+                    LogPrefix, job.Id, rootFolderId);
+            }
+            else
+            {
+                Logger.LogInformation("{LogPrefix} Reusing existing root folder | JobId: {JobId} | FolderId: {FolderId}", 
+                    LogPrefix, job.Id, rootFolderId);
             }
 
-            var rootFolderId = folderResult.Value;
-            Logger.LogInformation("{LogPrefix} Created root folder | JobId: {JobId} | FolderId: {FolderId}", 
-                LogPrefix, job.Id, rootFolderId);
+            // 8. Filter out already-completed files
+            var filesToUploadFiltered = new List<FileInfo>();
+            var skippedCount = 0;
+            
+            foreach (var file in filesToUpload)
+            {
+                var relativePath = Path.GetRelativePath(job.DownloadPath!, file.FullName);
+                var completedFileId = await progressContext.GetCompletedFileAsync(relativePath);
+                
+                if (!string.IsNullOrEmpty(completedFileId))
+                {
+                    // File was already uploaded (found in Redis)
+                    skippedCount++;
+                    Logger.LogInformation("{LogPrefix} Skipping already-uploaded file (from Redis) | JobId: {JobId} | File: {File} | FileId: {FileId}",
+                        LogPrefix, job.Id, file.Name, completedFileId);
+                    // Mark as completed in progress context for accurate progress tracking
+                    progressContext.MarkFileCompleted(file.Name, file.Length);
+                    continue;
+                }
+                
+                filesToUploadFiltered.Add(file);
+            }
+            
+            if (skippedCount > 0)
+            {
+                Logger.LogInformation("{LogPrefix} Skipped {SkippedCount} already-uploaded files | JobId: {JobId} | Remaining: {RemainingCount}",
+                    LogPrefix, skippedCount, job.Id, filesToUploadFiltered.Count);
+            }
 
-            // 8. Create folder hierarchy on Google Drive (preserving local structure)
+            // 9. Create folder hierarchy on Google Drive (preserving local structure)
             var folderIdMap = await CreateFolderHierarchyAsync(
-                filesToUpload, job.DownloadPath, rootFolderId, accessToken, cancellationToken);
+                filesToUploadFiltered.ToArray(), job.DownloadPath, rootFolderId, accessToken, cancellationToken);
 
-            // 9. Upload files - this must complete successfully before marking as COMPLETED
-            var uploadResult = await UploadFilesAsync(job, filesToUpload, folderIdMap, accessToken, cancellationToken);
+            // 10. Upload files - this must complete successfully before marking as COMPLETED
+            var uploadResult = await UploadFilesAsync(job, filesToUploadFiltered.ToArray(), folderIdMap, accessToken, cancellationToken);
 
-            // 10. Only mark as completed if ALL files uploaded successfully
+            // 11. Only mark as completed if ALL files uploaded successfully
             if (!uploadResult.AllFilesUploaded)
             {
                 var errorMessage = $"Upload incomplete: {uploadResult.FailedFiles} of {uploadResult.TotalFiles} files failed to upload.";
@@ -202,11 +261,11 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 return;
             }
 
-            // 11. Record final upload metrics (only if all files succeeded)
+            // 12. Record final upload metrics (only if all files succeeded)
             var uploadDuration = (DateTime.UtcNow - uploadStartTime).TotalSeconds;
             speedMetrics.RecordUploadComplete(job.Id, job.UserId, "googledrive_upload", totalBytes, uploadDuration);
 
-            // 12. Mark as completed - ALL files uploaded successfully
+            // 13. Mark as completed - ALL files uploaded successfully
             job.Status = JobStatus.COMPLETED;
             job.CompletedAt = DateTime.UtcNow;
             job.CurrentState = "Upload completed successfully";
@@ -216,8 +275,9 @@ namespace TorreClou.GoogleDrive.Worker.Services
             Logger.LogInformation("{LogPrefix} Job completed successfully | JobId: {JobId} | Files: {Files}", 
                 LogPrefix, job.Id, uploadResult.TotalFiles);
 
-            // 13. Create Sync entity and publish to sync stream for optional S3 sync
+            // 14. Create Sync entity and publish to sync stream for optional S3 sync
             await CreateSyncAndPublishToStreamAsync(job, totalBytes, filesToUpload.Length);
+            // Lock is automatically released when 'distributedLock' is disposed (via using statement)
         }
 
         private async Task CreateSyncAndPublishToStreamAsync(UserJob job, long totalBytes, int filesCount)
@@ -247,14 +307,14 @@ namespace TorreClou.GoogleDrive.Worker.Services
                     LogPrefix, job.Id, sync.Id, totalBytes, filesCount);
 
                 // Publish to sync stream
-                var db = redis.GetDatabase();
                 var syncStreamKey = "sync:stream";
-                await db.StreamAddAsync(syncStreamKey, [
-                    new NameValueEntry("jobId", job.Id.ToString()),
-                    new NameValueEntry("syncId", sync.Id.ToString()),
-                    new NameValueEntry("downloadPath", job.DownloadPath ?? string.Empty),
-                    new NameValueEntry("createdAt", DateTime.UtcNow.ToString("O"))
-                ]);
+                await redisStreamService.PublishAsync(syncStreamKey, new Dictionary<string, string>
+                {
+                    { "jobId", job.Id.ToString() },
+                    { "syncId", sync.Id.ToString() },
+                    { "downloadPath", job.DownloadPath ?? string.Empty },
+                    { "createdAt", DateTime.UtcNow.ToString("O") }
+                });
 
                 Logger.LogInformation("{LogPrefix} Published to sync stream | JobId: {JobId} | SyncId: {SyncId} | Stream: {Stream}",
                     LogPrefix, job.Id, sync.Id, syncStreamKey);
@@ -441,6 +501,22 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 Logger.LogInformation("{LogPrefix} Uploading file {Current}/{Total} | JobId: {JobId} | File: {File}",
                     LogPrefix, uploadedFiles, result.TotalFiles, job.Id, file.Name);
 
+                // Check if file exists in Google Drive as fallback (if Redis was cleared)
+                var existingFileResult = await googleDriveService.CheckFileExistsAsync(folderId, file.Name, accessToken, cancellationToken);
+                string? driveFileId = null;
+                
+                if (existingFileResult.IsSuccess && !string.IsNullOrEmpty(existingFileResult.Value))
+                {
+                    // File exists in Google Drive but not in Redis - skip upload and update Redis
+                    driveFileId = existingFileResult.Value;
+                    await progressContext.SetCompletedFileAsync(relativePath, driveFileId);
+                    progressContext.MarkFileCompleted(file.Name, file.Length);
+                    
+                    Logger.LogInformation("{LogPrefix} File exists in Google Drive (not in Redis), skipping upload | JobId: {JobId} | File: {File} | FileId: {FileId}",
+                        LogPrefix, job.Id, file.Name, driveFileId);
+                    continue; // Skip to next file
+                }
+
                 // Upload file to Google Drive (progress is reported via context)
                 var uploadResult = await googleDriveService.UploadFileAsync(
                     file.FullName,
@@ -485,6 +561,10 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 }
                 else
                 {
+                    // Store completed file in Redis for recovery
+                    driveFileId = uploadResult.Value;
+                    await progressContext.SetCompletedFileAsync(relativePath, driveFileId);
+                    
                     // Mark file as completed in progress context
                     progressContext.MarkFileCompleted(file.Name, file.Length);
                     
@@ -501,7 +581,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
                     }
                     
                     Logger.LogInformation("{LogPrefix} File uploaded successfully | JobId: {JobId} | File: {File} | FileId: {FileId}",
-                        LogPrefix, job.Id, file.Name, uploadResult.Value);
+                        LogPrefix, job.Id, file.Name, driveFileId);
                 }
             }
 

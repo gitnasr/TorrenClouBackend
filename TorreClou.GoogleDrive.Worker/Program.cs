@@ -1,4 +1,5 @@
 using StackExchange.Redis;
+using TorreClou.Core.Interfaces;
 using TorreClou.GoogleDrive.Worker;
 using TorreClou.GoogleDrive.Worker.Services;
 using TorreClou.GoogleDrive.Worker.Services.Strategies;
@@ -120,6 +121,11 @@ var redisConnectionString = builder.Configuration.GetSection("Redis:ConnectionSt
 builder.Services.AddSingleton<IConnectionMultiplexer>(
     ConnectionMultiplexer.Connect(redisConnectionString)
 );
+
+// Redis Services
+builder.Services.AddSingleton<IRedisCacheService, RedisCacheService>();
+builder.Services.AddScoped<IRedisLockService, RedisLockService>();
+builder.Services.AddSingleton<IRedisStreamService, RedisStreamService>();
 
 // Google Drive Services
 builder.Services.Configure<GoogleDriveSettings>(builder.Configuration.GetSection("GoogleDrive"));
