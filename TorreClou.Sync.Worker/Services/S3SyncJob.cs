@@ -137,7 +137,7 @@ namespace TorreClou.Sync.Worker.Services
 
                 // Update job status - sync completed (upload stream was already published by TorrentDownloadJob)
                 // Don't change DownloadPath - keep block storage path for Google Drive Worker
-                job.Status = JobStatus.PENDING_UPLOAD;
+                job.Status = JobStatus.COMPLETED;
                 job.CurrentState = "Files synced to S3. Upload in progress...";
                 job.BytesDownloaded = job.TotalBytes;
                 await UnitOfWork.Complete();
