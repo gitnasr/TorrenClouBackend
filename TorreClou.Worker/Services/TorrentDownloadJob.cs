@@ -429,23 +429,12 @@ namespace TorreClou.Worker.Services
                 job.BytesDownloaded = job.TotalBytes;
                 await UnitOfWork.Complete();
 
-                Logger.LogInformation("{LogPrefix} Publishing to sync and upload streams | JobId: {JobId} | Provider: {Provider}", 
+                Logger.LogInformation("{LogPrefix} Publishing to upload stream | JobId: {JobId} | Provider: {Provider}", 
                     LogPrefix, job.Id, job.StorageProfile?.ProviderType);
 
                 var db = redis.GetDatabase();
 
-                // Step 2: Publish to sync stream for S3 sync worker
-                var syncStreamKey = "sync:stream";
-                await db.StreamAddAsync(syncStreamKey, [
-                    new NameValueEntry("jobId", job.Id.ToString()),
-                    new NameValueEntry("downloadPath", job.DownloadPath ?? string.Empty),
-                    new NameValueEntry("createdAt", DateTime.UtcNow.ToString("O"))
-                ]);
-
-                Logger.LogInformation("{LogPrefix} Published to sync stream | JobId: {JobId} | Stream: {Stream}", 
-                    LogPrefix, job.Id, syncStreamKey);
-
-                // Step 3: Publish to upload stream for Google Drive worker
+                // Publish to upload stream for Google Drive worker (sync will be triggered after upload completes)
                 var uploadStreamKey = GetUploadStreamKey(job.StorageProfile?.ProviderType ?? StorageProviderType.GoogleDrive);
                 await db.StreamAddAsync(uploadStreamKey, [
                     new NameValueEntry("jobId", job.Id.ToString()),

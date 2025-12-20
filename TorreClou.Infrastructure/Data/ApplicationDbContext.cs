@@ -24,6 +24,7 @@ namespace TorreClou.Infrastructure.Data
         public DbSet<UserJob> UserJobs { get; set; }
         public DbSet<Invoice> Invoices { get; set; }
         public DbSet<UserStrike> UserStrikes { get; set; }
+        public DbSet<Sync> Syncs { get; set; }
         public DbSet<S3SyncProgress> S3SyncProgresses { get; set; }
 
         protected override void OnModelCreating(ModelBuilder builder)
@@ -66,6 +67,17 @@ namespace TorreClou.Infrastructure.Data
                 .Property(j => j.Type)
                 .HasConversion<string>();
 
+            // --- Sync Configuration ---
+            builder.Entity<Sync>()
+                .Property(s => s.Status)
+                .HasConversion<string>();
+
+            builder.Entity<Sync>()
+                .HasOne(s => s.UserJob)
+                .WithMany()
+                .HasForeignKey(s => s.JobId)
+                .OnDelete(DeleteBehavior.Cascade);
+
             // --- S3SyncProgress Configuration ---
             builder.Entity<S3SyncProgress>()
                 .Property(p => p.Status)
@@ -75,6 +87,12 @@ namespace TorreClou.Infrastructure.Data
                 .HasOne(p => p.UserJob)
                 .WithMany()
                 .HasForeignKey(p => p.JobId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            builder.Entity<S3SyncProgress>()
+                .HasOne(p => p.Sync)
+                .WithMany(s => s.FileProgress)
+                .HasForeignKey(p => p.SyncId)
                 .OnDelete(DeleteBehavior.Cascade);
 
             // --- Invoice Configuration ---

@@ -8,6 +8,7 @@ using TorreClou.Infrastructure.Workers;
 using TorreClou.Infrastructure.Services;
 using TorreClou.Infrastructure.Settings;
 using Microsoft.Extensions.Options;
+using StackExchange.Redis;
 
 namespace TorreClou.GoogleDrive.Worker.Services
 {
@@ -21,7 +22,8 @@ namespace TorreClou.GoogleDrive.Worker.Services
         IGoogleDriveJob googleDriveService,
         IUploadProgressContext progressContext,
         ITransferSpeedMetrics speedMetrics,
-        IOptions<BackblazeSettings> backblazeSettings) : BaseJob<GoogleDriveUploadJob>(unitOfWork, logger)
+        IOptions<BackblazeSettings> backblazeSettings,
+        IConnectionMultiplexer redis) : BaseJob<GoogleDriveUploadJob>(unitOfWork, logger)
     {
         private readonly BackblazeSettings _backblazeSettings = backblazeSettings.Value;
 
@@ -213,7 +215,55 @@ namespace TorreClou.GoogleDrive.Worker.Services
             Logger.LogInformation("{LogPrefix} Job completed successfully | JobId: {JobId} | Files: {Files}", 
                 LogPrefix, job.Id, uploadResult.TotalFiles);
 
-            // Note: Do NOT cleanup block storage here - S3SyncJob handles cleanup after sync completes
+            // 13. Create Sync entity and publish to sync stream for optional S3 sync
+            await CreateSyncAndPublishToStreamAsync(job, totalBytes, filesToUpload.Length);
+        }
+
+        private async Task CreateSyncAndPublishToStreamAsync(UserJob job, long totalBytes, int filesCount)
+        {
+            try
+            {
+                // Create Sync entity with Pending status
+                var sync = new Sync
+                {
+                    JobId = job.Id,
+                    Status = SyncStatus.Pending,
+                    LocalFilePath = job.DownloadPath,
+                    S3KeyPrefix = $"torrents/{job.Id}",
+                    TotalBytes = totalBytes,
+                    BytesSynced = 0,
+                    FilesTotal = filesCount,
+                    FilesSynced = 0,
+                    StartedAt = null,
+                    RetryCount = 0
+                };
+
+                var syncRepository = UnitOfWork.Repository<Sync>();
+                await syncRepository.AddAsync(sync);
+                await UnitOfWork.Complete();
+
+                Logger.LogInformation("{LogPrefix} Created Sync entity | JobId: {JobId} | SyncId: {SyncId} | TotalBytes: {TotalBytes} | Files: {Files}",
+                    LogPrefix, job.Id, sync.Id, totalBytes, filesCount);
+
+                // Publish to sync stream
+                var db = redis.GetDatabase();
+                var syncStreamKey = "sync:stream";
+                await db.StreamAddAsync(syncStreamKey, [
+                    new NameValueEntry("jobId", job.Id.ToString()),
+                    new NameValueEntry("syncId", sync.Id.ToString()),
+                    new NameValueEntry("downloadPath", job.DownloadPath ?? string.Empty),
+                    new NameValueEntry("createdAt", DateTime.UtcNow.ToString("O"))
+                ]);
+
+                Logger.LogInformation("{LogPrefix} Published to sync stream | JobId: {JobId} | SyncId: {SyncId} | Stream: {Stream}",
+                    LogPrefix, job.Id, sync.Id, syncStreamKey);
+            }
+            catch (Exception ex)
+            {
+                // Don't fail the job if sync creation/publishing fails - it's optional
+                Logger.LogWarning(ex, "{LogPrefix} Failed to create Sync entity or publish to sync stream | JobId: {JobId}",
+                    LogPrefix, job.Id);
+            }
         }
 
         /// <summary>

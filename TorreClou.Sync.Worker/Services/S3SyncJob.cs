@@ -24,94 +24,132 @@ namespace TorreClou.Sync.Worker.Services
 
         protected override string LogPrefix => "[S3:SYNC]";
 
-        protected override void ConfigureSpecification(BaseSpecification<UserJob> spec)
-        {
-            spec.AddInclude(j => j.StorageProfile);
-            spec.AddInclude(j => j.User);
-        }
-
         [AutomaticRetry(Attempts = 3, DelaysInSeconds = new[] { 60, 300, 900 })]
         [Queue("sync")]
-        public new async Task ExecuteAsync(int jobId, CancellationToken cancellationToken = default)
+        public async Task ExecuteAsync(int syncId, CancellationToken cancellationToken = default)
         {
-            await base.ExecuteAsync(jobId, cancellationToken);
+            try
+            {
+                Logger.LogInformation("{LogPrefix} Starting S3 sync job | SyncId: {SyncId}", LogPrefix, syncId);
+
+                // Load Sync entity
+                var syncRepository = UnitOfWork.Repository<Sync>();
+                var sync = await syncRepository.GetByIdAsync(syncId);
+                if (sync == null)
+                {
+                    Logger.LogError("{LogPrefix} Sync entity not found | SyncId: {SyncId}", LogPrefix, syncId);
+                    return;
+                }
+
+                // Load UserJob for file access
+                var jobRepository = UnitOfWork.Repository<UserJob>();
+                var job = await jobRepository.GetByIdAsync(sync.JobId);
+                if (job == null)
+                {
+                    Logger.LogError("{LogPrefix} UserJob not found | SyncId: {SyncId} | JobId: {JobId}", 
+                        LogPrefix, syncId, sync.JobId);
+                    sync.Status = SyncStatus.Failed;
+                    sync.ErrorMessage = "UserJob not found";
+                    await UnitOfWork.Complete();
+                    return;
+                }
+
+                await ExecuteCoreAsync(sync, job, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "{LogPrefix} Fatal error in S3 sync job | SyncId: {SyncId}", LogPrefix, syncId);
+                throw;
+            }
         }
 
-        protected override async Task ExecuteCoreAsync(UserJob job, CancellationToken cancellationToken)
+        private async Task ExecuteCoreAsync(Sync sync, UserJob job, CancellationToken cancellationToken)
         {
             // Store original download path (block storage path) for cleanup
-            var originalDownloadPath = job.DownloadPath;
+            var originalDownloadPath = sync.LocalFilePath ?? job.DownloadPath;
 
             try
             {
-                // Validate job status - accept PENDING_UPLOAD (from TorrentDownloadJob) or SYNCING/SYNC_RETRY (retry)
-                if (job.Status != JobStatus.PENDING_UPLOAD && 
-                    job.Status != JobStatus.SYNCING && 
-                    job.Status != JobStatus.SYNC_RETRY)
+                // Validate sync status - accept Pending or Retrying
+                if (sync.Status != SyncStatus.Pending && sync.Status != SyncStatus.Retrying)
                 {
-                    Logger.LogWarning("{LogPrefix} Job is not in valid state for sync | JobId: {JobId} | Status: {Status}",
-                        LogPrefix, job.Id, job.Status);
+                    Logger.LogWarning("{LogPrefix} Sync is not in valid state | SyncId: {SyncId} | JobId: {JobId} | Status: {Status}",
+                        LogPrefix, sync.Id, job.Id, sync.Status);
                     return;
                 }
 
                 // Validate download path
                 if (string.IsNullOrEmpty(originalDownloadPath))
                 {
-                    await MarkJobFailedAsync(job, "Download path is empty", hasRetries: false);
+                    await MarkSyncFailedAsync(sync, "Download path is empty", hasRetries: false);
                     return;
                 }
 
                 // Validate local directory exists
                 if (!Directory.Exists(originalDownloadPath))
                 {
-                    await MarkJobFailedAsync(job, $"Download directory does not exist: {originalDownloadPath}", hasRetries: false);
+                    await MarkSyncFailedAsync(sync, $"Download directory does not exist: {originalDownloadPath}", hasRetries: false);
                     return;
                 }
 
-                Logger.LogInformation("{LogPrefix} Starting S3 sync | JobId: {JobId} | Source: {Source} | Bucket: {Bucket}",
-                    LogPrefix, job.Id, originalDownloadPath, _backblazeSettings.BucketName);
+                Logger.LogInformation("{LogPrefix} Starting S3 sync | SyncId: {SyncId} | JobId: {JobId} | Source: {Source} | Bucket: {Bucket}",
+                    LogPrefix, sync.Id, job.Id, originalDownloadPath, _backblazeSettings.BucketName);
 
-                // Update job status
-                job.Status = JobStatus.SYNCING;
-                job.CurrentState = "Scanning files for sync...";
-                job.LastHeartbeat = DateTime.UtcNow;
+                // Update sync status
+                sync.Status = SyncStatus.InProgress;
+                sync.StartedAt = DateTime.UtcNow;
                 await UnitOfWork.Complete();
 
                 // Scan files to upload (exclude .torrent, .dht, .fresume files)
                 var filesToUpload = GetFilesToUpload(originalDownloadPath);
                 if (filesToUpload.Length == 0)
                 {
-                    await MarkJobFailedAsync(job, "No files found to upload", hasRetries: false);
+                    await MarkSyncFailedAsync(sync, "No files found to upload", hasRetries: false);
                     return;
                 }
 
                 var totalBytes = filesToUpload.Sum(f => f.Length);
-                Logger.LogInformation("{LogPrefix} Found {FileCount} files to upload | JobId: {JobId} | TotalSize: {SizeMB:F2} MB",
-                    LogPrefix, filesToUpload.Length, job.Id, totalBytes / (1024.0 * 1024.0));
+                // Update sync with file count and total bytes if not set
+                if (sync.FilesTotal == 0 || sync.TotalBytes == 0)
+                {
+                    sync.FilesTotal = filesToUpload.Length;
+                    sync.TotalBytes = totalBytes;
+                }
+
+                Logger.LogInformation("{LogPrefix} Found {FileCount} files to upload | SyncId: {SyncId} | JobId: {JobId} | TotalSize: {SizeMB:F2} MB",
+                    LogPrefix, filesToUpload.Length, sync.Id, job.Id, totalBytes / (1024.0 * 1024.0));
 
                 // Upload each file
-                var overallBytesUploaded = 0L;
-                var startTime = DateTime.UtcNow;
+                var overallBytesUploaded = sync.BytesSynced;
+                var filesSynced = sync.FilesSynced;
+                var startTime = sync.StartedAt ?? DateTime.UtcNow;
                 var lastProgressUpdate = DateTime.UtcNow;
 
-                for (int i = 0; i < filesToUpload.Length; i++)
+                for (int i = filesSynced; i < filesToUpload.Length; i++)
                 {
                     var file = filesToUpload[i];
                     var relativePath = Path.GetRelativePath(originalDownloadPath, file.FullName);
-                    var s3Key = $"torrents/{job.Id}/{relativePath.Replace('\\', '/')}";
+                    var s3Key = sync.S3KeyPrefix != null 
+                        ? $"{sync.S3KeyPrefix}/{relativePath.Replace('\\', '/')}"
+                        : $"torrents/{job.Id}/{relativePath.Replace('\\', '/')}";
 
-                    Logger.LogInformation("{LogPrefix} Uploading file {Index}/{Total} | JobId: {JobId} | File: {FileName} | Size: {SizeMB:F2} MB",
-                        LogPrefix, i + 1, filesToUpload.Length, job.Id, file.Name, file.Length / (1024.0 * 1024.0));
+                    Logger.LogInformation("{LogPrefix} Uploading file {Index}/{Total} | SyncId: {SyncId} | JobId: {JobId} | File: {FileName} | Size: {SizeMB:F2} MB",
+                        LogPrefix, i + 1, filesToUpload.Length, sync.Id, job.Id, file.Name, file.Length / (1024.0 * 1024.0));
 
                     // Upload file with resume support
-                    var uploadResult = await UploadFileWithResumeAsync(job, file, s3Key, cancellationToken);
+                    var uploadResult = await UploadFileWithResumeAsync(sync, job, file, s3Key, cancellationToken);
                     if (uploadResult.IsFailure)
                     {
-                        await MarkJobFailedAsync(job, $"Failed to upload file {file.Name}: {uploadResult.Error.Message}", hasRetries: true);
+                        await MarkSyncFailedAsync(sync, $"Failed to upload file {file.Name}: {uploadResult.Error.Message}", hasRetries: true);
                         return;
                     }
 
                     overallBytesUploaded += file.Length;
+                    filesSynced++;
+
+                    // Update sync progress
+                    sync.BytesSynced = overallBytesUploaded;
+                    sync.FilesSynced = filesSynced;
 
                     // Update progress periodically
                     var now = DateTime.UtcNow;
@@ -121,39 +159,41 @@ namespace TorreClou.Sync.Worker.Services
                         var elapsed = (now - startTime).TotalSeconds;
                         var speedMBps = elapsed > 0 ? (overallBytesUploaded / (1024.0 * 1024.0)) / elapsed : 0;
 
-                        job.CurrentState = $"Syncing to S3: {percent:F1}% ({overallBytesUploaded / (1024.0 * 1024.0):F1}/{totalBytes / (1024.0 * 1024.0):F1} MB) @ {speedMBps:F2} MB/s";
-                        job.LastHeartbeat = DateTime.UtcNow;
                         await UnitOfWork.Complete();
-                        lastProgressUpdate = now;
 
-                        Logger.LogInformation("{LogPrefix} Sync progress | JobId: {JobId} | {Percent:F1}% | {UploadedMB:F1}/{TotalMB:F1} MB | Speed: {SpeedMBps:F2} MB/s",
-                            LogPrefix, job.Id, percent, overallBytesUploaded / (1024.0 * 1024.0), totalBytes / (1024.0 * 1024.0), speedMBps);
+                        Logger.LogInformation("{LogPrefix} Sync progress | SyncId: {SyncId} | JobId: {JobId} | {Percent:F1}% | {UploadedMB:F1}/{TotalMB:F1} MB | Speed: {SpeedMBps:F2} MB/s",
+                            LogPrefix, sync.Id, job.Id, percent, overallBytesUploaded / (1024.0 * 1024.0), totalBytes / (1024.0 * 1024.0), speedMBps);
+
+                        lastProgressUpdate = now;
                     }
                 }
 
                 // All files uploaded successfully
-                Logger.LogInformation("{LogPrefix} All files synced successfully | JobId: {JobId} | Files: {FileCount} | TotalSize: {SizeMB:F2} MB",
-                    LogPrefix, job.Id, filesToUpload.Length, totalBytes / (1024.0 * 1024.0));
+                Logger.LogInformation("{LogPrefix} All files synced successfully | SyncId: {SyncId} | JobId: {JobId} | Files: {FileCount} | TotalSize: {SizeMB:F2} MB",
+                    LogPrefix, sync.Id, job.Id, filesToUpload.Length, totalBytes / (1024.0 * 1024.0));
 
-                // Update job status - sync completed (upload stream was already published by TorrentDownloadJob)
-                // Don't change DownloadPath - keep block storage path for Google Drive Worker
-                job.Status = JobStatus.COMPLETED;
-                job.CurrentState = "Files synced to S3. Upload in progress...";
-                job.BytesDownloaded = job.TotalBytes;
+                // Update sync status - sync completed
+                sync.Status = SyncStatus.Completed;
+                sync.CompletedAt = DateTime.UtcNow;
+                sync.BytesSynced = overallBytesUploaded;
+                sync.FilesSynced = filesSynced;
                 await UnitOfWork.Complete();
 
                 // Clean up block storage after successful sync
-                // Note: Google Drive Worker may still be using it, but S3 sync is complete
-                // We clean up here to free space - Google Drive should have already read the files
-                // If Google Drive is still processing, it should have the files in memory/temp already
-                // Add a small delay to give Google Drive time to finish reading if it started late
+                // Add a small delay to ensure Google Drive has finished if it was still processing
                 await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
                 await CleanupBlockStorageAsync(originalDownloadPath);
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "{LogPrefix} Fatal error during sync | JobId: {JobId}",
-                    LogPrefix, job.Id);
+                Logger.LogError(ex, "{LogPrefix} Fatal error during sync | SyncId: {SyncId} | JobId: {JobId}",
+                    LogPrefix, sync.Id, job.Id);
+                
+                // Mark sync as failed
+                sync.Status = SyncStatus.Failed;
+                sync.ErrorMessage = ex.Message;
+                await UnitOfWork.Complete();
+                
                 throw;
             }
         }
@@ -187,7 +227,7 @@ namespace TorreClou.Sync.Worker.Services
             }
         }
 
-        private async Task<Result> UploadFileWithResumeAsync(UserJob job, FileInfo file, string s3Key, CancellationToken cancellationToken)
+        private async Task<Result> UploadFileWithResumeAsync(Sync sync, UserJob job, FileInfo file, string s3Key, CancellationToken cancellationToken)
         {
             try
             {
@@ -202,7 +242,7 @@ namespace TorreClou.Sync.Worker.Services
 
                 // Check for existing sync progress
                 var existingProgress = await UnitOfWork.Repository<S3SyncProgress>()
-                    .GetEntityWithSpec(new BaseSpecification<S3SyncProgress>(p => p.JobId == job.Id && p.S3Key == s3Key));
+                    .GetEntityWithSpec(new BaseSpecification<S3SyncProgress>(p => p.SyncId == sync.Id && p.S3Key == s3Key));
 
                 S3SyncProgress? progress = existingProgress;
                 string? uploadId = null;
@@ -252,6 +292,7 @@ namespace TorreClou.Sync.Worker.Services
                     progress = new S3SyncProgress
                     {
                         JobId = job.Id,
+                        SyncId = sync.Id,
                         LocalFilePath = file.FullName,
                         S3Key = s3Key,
                         UploadId = uploadId,
@@ -383,6 +424,24 @@ namespace TorreClou.Sync.Worker.Services
             }
 
             return merged.OrderBy(p => p.PartNumber).ToList();
+        }
+
+        private async Task MarkSyncFailedAsync(Sync sync, string errorMessage, bool hasRetries = true)
+        {
+            sync.Status = SyncStatus.Failed;
+            sync.ErrorMessage = errorMessage;
+            
+            if (hasRetries)
+            {
+                sync.RetryCount++;
+                sync.Status = SyncStatus.Retrying;
+                sync.NextRetryAt = DateTime.UtcNow.AddMinutes(5 * sync.RetryCount); // Exponential backoff
+            }
+            
+            await UnitOfWork.Complete();
+            
+            Logger.LogError("{LogPrefix} Sync marked as failed | SyncId: {SyncId} | JobId: {JobId} | Error: {Error} | Retries: {Retries}",
+                LogPrefix, sync.Id, sync.JobId, errorMessage, sync.RetryCount);
         }
 
         private async Task CleanupBlockStorageAsync(string originalDownloadPath)

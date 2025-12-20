@@ -7,6 +7,8 @@ namespace TorreClou.Core.Entities.Jobs
     {
         public int JobId { get; set; }
         public UserJob UserJob { get; set; } = null!;
+        public int SyncId { get; set; }
+        public Sync Sync { get; set; } = null!;
         public string LocalFilePath { get; set; } = string.Empty;
         public string S3Key { get; set; } = string.Empty;
         public string? UploadId { get; set; } // S3 multipart upload ID

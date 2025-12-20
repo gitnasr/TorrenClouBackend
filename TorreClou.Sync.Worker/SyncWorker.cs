@@ -1,5 +1,6 @@
 using StackExchange.Redis;
 using TorreClou.Core.Entities.Jobs;
+using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Infrastructure.Workers;
 using TorreClou.Sync.Worker.Services;
@@ -40,7 +41,7 @@ namespace TorreClou.Sync.Worker
             {
                 // Parse job data from stream entry
                 var jobIdStr = entry["jobId"].ToString();
-                var downloadPath = entry["downloadPath"].ToString();
+                var syncIdStr = entry["syncId"].ToString();
 
                 if (!int.TryParse(jobIdStr, out var jobId))
                 {
@@ -48,26 +49,55 @@ namespace TorreClou.Sync.Worker
                     return false;
                 }
 
-                // Fetch job from database for validation
-                var job = await unitOfWork.Repository<UserJob>().GetByIdAsync(jobId);
-                if (job == null)
+                int? syncId = null;
+                if (!string.IsNullOrEmpty(syncIdStr) && int.TryParse(syncIdStr, out var parsedSyncId))
                 {
-                    Logger.LogError("[SYNC_WORKER] Job not found in database | JobId: {JobId}", jobId);
+                    syncId = parsedSyncId;
+                }
+
+                // Fetch Sync entity from database for validation
+                Sync? sync = null;
+                if (syncId.HasValue)
+                {
+                    sync = await unitOfWork.Repository<Sync>().GetByIdAsync(syncId.Value);
+                }
+                else
+                {
+                    // If syncId not provided, find by JobId
+                    var syncRepository = unitOfWork.Repository<Sync>();
+                    var syncs = await syncRepository.GetAllAsync();
+                    sync = syncs.FirstOrDefault(s => s.JobId == jobId);
+                }
+
+                if (sync == null)
+                {
+                    Logger.LogError("[SYNC_WORKER] Sync entity not found in database | JobId: {JobId} | SyncId: {SyncId}", 
+                        jobId, syncId);
                     return false;
+                }
+
+                // Validate sync status - only process Pending or Retrying
+                if (sync.Status != SyncStatus.Pending && sync.Status != SyncStatus.Retrying)
+                {
+                    Logger.LogWarning("[SYNC_WORKER] Sync is not in valid state for processing | JobId: {JobId} | SyncId: {SyncId} | Status: {Status}",
+                        jobId, sync.Id, sync.Status);
+                    return true; // Not an error, just skip
                 }
 
                 // Note: Lease acquisition is handled by BaseJob.ExecuteAsync in Hangfire
                 // We just enqueue the job here - Hangfire will handle duplicate prevention via leases
 
-                Logger.LogInformation("[SYNC_WORKER] Enqueuing S3 sync job to Hangfire | JobId: {JobId}", jobId);
+                Logger.LogInformation("[SYNC_WORKER] Enqueuing S3 sync job to Hangfire | JobId: {JobId} | SyncId: {SyncId}", 
+                    jobId, sync.Id);
 
                 // Enqueue to Hangfire for reliable execution with retry capability
+                // Pass syncId to the job
                 var hangfireJobId = backgroundJobClient.Enqueue<S3SyncJob>(
-                    service => service.ExecuteAsync(jobId, CancellationToken.None));
+                    service => service.ExecuteAsync(sync.Id, CancellationToken.None));
 
                 Logger.LogInformation(
-                    "[SYNC_WORKER] S3 sync job enqueued | JobId: {JobId} | HangfireJobId: {HangfireJobId}",
-                    jobId, hangfireJobId);
+                    "[SYNC_WORKER] S3 sync job enqueued | JobId: {JobId} | SyncId: {SyncId} | HangfireJobId: {HangfireJobId}",
+                    jobId, sync.Id, hangfireJobId);
 
                 return true;
             }
@@ -89,24 +119,23 @@ namespace TorreClou.Sync.Worker
                 using var errorScope = _serviceScopeFactory.CreateScope();
                 var errorUnitOfWork = errorScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
                 
-                var jobIdStr = entry["jobId"].ToString();
-                if (int.TryParse(jobIdStr, out var jobId))
+                var syncIdStr = entry["syncId"].ToString();
+                if (!string.IsNullOrEmpty(syncIdStr) && int.TryParse(syncIdStr, out var syncId))
                 {
-                    var job = await errorUnitOfWork.Repository<UserJob>().GetByIdAsync(jobId);
-                    if (job != null)
+                    var sync = await errorUnitOfWork.Repository<Sync>().GetByIdAsync(syncId);
+                    if (sync != null)
                     {
-                        job.Status = TorreClou.Core.Enums.JobStatus.FAILED;
-                        job.ErrorMessage = $"Failed to enqueue sync job: {errorMessage}";
-                        job.CompletedAt = DateTime.UtcNow;
+                        sync.Status = SyncStatus.Failed;
+                        sync.ErrorMessage = $"Failed to enqueue sync job: {errorMessage}";
                         await errorUnitOfWork.Complete();
                         
-                        Logger.LogInformation("[SYNC_WORKER] Job marked as failed | JobId: {JobId}", jobId);
+                        Logger.LogInformation("[SYNC_WORKER] Sync marked as failed | SyncId: {SyncId}", syncId);
                     }
                 }
             }
             catch (Exception updateEx)
             {
-                Logger.LogError(updateEx, "[SYNC_WORKER] Failed to update job status to FAILED");
+                Logger.LogError(updateEx, "[SYNC_WORKER] Failed to update sync status to FAILED");
             }
         }
     }

@@ -61,4 +61,13 @@
         Completed,
         Failed
     }
+
+    public enum SyncStatus
+    {
+        Pending,      // Created but not started
+        InProgress,   // Currently syncing
+        Completed,   // All files synced successfully
+        Failed,       // Sync failed
+        Retrying      // Retrying after failure
+    }
 }
