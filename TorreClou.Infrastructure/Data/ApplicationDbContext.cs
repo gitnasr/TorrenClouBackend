@@ -50,10 +50,6 @@ namespace TorreClou.Infrastructure.Data
                 .Property(p => p.CredentialsJson)
                 .HasColumnType("jsonb");
 
-            builder.Entity<RequestedFile>()
-                .HasIndex(t => t.InfoHash).IsUnique();
-
-
             builder.Entity<WalletTransaction>()
                 .Property(t => t.Type)
                 .HasConversion<string>();
@@ -153,8 +149,11 @@ namespace TorreClou.Infrastructure.Data
                 .Property(e => e.SelectedFileIndices)
                 .HasColumnType("integer[]");
 
+            // Composite unique index: allows multiple users to have the same torrent,
+            // but prevents duplicate entries for the same user and torrent
             builder.Entity<RequestedFile>()
-                .HasIndex(t => t.InfoHash).IsUnique();
+                .HasIndex(t => new { t.InfoHash, t.UploadedByUserId })
+                .IsUnique();
 
             builder.Entity<RequestedFile>()
                 .HasOne(t => t.UploadedByUser)
