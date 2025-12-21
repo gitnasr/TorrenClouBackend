@@ -374,11 +374,11 @@ namespace TorreClou.Worker.Services
             try
             {
                 await engine.SaveStateAsync();
-                Logger.LogInformation("{LogPrefix} FastResume saved | Reason: {Reason}", LogPrefix, reason);
+                Logger.LogDebug("{LogPrefix} FastResume saved | Reason: {Reason}", LogPrefix, reason);
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "{LogPrefix} Failed to save FastResume | Reason: {Reason}", LogPrefix, reason);
+                Logger.LogCritical(ex, "{LogPrefix} Failed to save FastResume | Reason: {Reason}", LogPrefix, reason);
             }
         }
 
