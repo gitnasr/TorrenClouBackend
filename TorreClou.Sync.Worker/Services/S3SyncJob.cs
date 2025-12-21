@@ -94,7 +94,7 @@ namespace TorreClou.Sync.Worker.Services
                 Logger.LogInformation("{LogPrefix} Starting | SyncId: {SyncId} | Bucket: {Bucket}",
                     LogPrefix, sync.Id, _backblazeSettings.BucketName);
 
-                sync.Status = SyncStatus.InProgress;
+                sync.Status = SyncStatus.SYNCING;
                 sync.StartedAt = DateTime.UtcNow;
                 await UnitOfWork.Complete();
 
@@ -194,7 +194,7 @@ namespace TorreClou.Sync.Worker.Services
                 List<PartETag>? existingParts = null;
 
                 // 3. Resume Logic
-                if (progress != null && progress.Status == SyncStatus.InProgress && !string.IsNullOrEmpty(progress.UploadId))
+                if (progress != null && progress.Status == SyncStatus.SYNCING && !string.IsNullOrEmpty(progress.UploadId))
                 {
                     uploadId = progress.UploadId;
                     existingParts = ParsePartETags(progress.PartETags);
@@ -232,7 +232,7 @@ namespace TorreClou.Sync.Worker.Services
                         UploadId = uploadId,
                         PartSize = PartSize,
                         TotalParts = totalParts,
-                        Status = SyncStatus.InProgress,
+                        Status = SyncStatus.SYNCING,
                         StartedAt = DateTime.UtcNow,
                         TotalBytes = file.Length
                     };

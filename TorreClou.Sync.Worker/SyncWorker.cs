@@ -67,7 +67,7 @@ namespace TorreClou.Sync.Worker
 
             // 6. Update State & Persist ID 
             sync.HangfireJobId = hangfireJobId;
-            sync.Status = SyncStatus.NotStarted; 
+            sync.Status = SyncStatus.SYNCING; 
 
             await unitOfWork.Complete();
 

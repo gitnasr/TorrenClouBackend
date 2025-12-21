@@ -33,7 +33,6 @@ namespace TorreClou.Core.DTOs.Jobs
         // Computed properties
         public double ProgressPercentage => TotalBytes > 0 ? (BytesSynced / (double)TotalBytes) * 100 : 0;
         public bool IsActive => Status == SyncStatus.SYNCING || 
-                               Status == SyncStatus.InProgress || 
                                Status == SyncStatus.SYNC_RETRY;
     }
 }
