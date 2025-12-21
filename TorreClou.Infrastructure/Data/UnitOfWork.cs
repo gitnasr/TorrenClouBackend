@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using TorreClou.Core.Entities;
 using TorreClou.Core.Interfaces;
 using TorreClou.Infrastructure.Repositories;
@@ -39,6 +40,15 @@ namespace TorreClou.Infrastructure.Data
             }
 
             return (IGenericRepository<T>)_repositories[type];
+        }
+
+        public void Detach<T>(T entity) where T : BaseEntity
+        {
+            var entry = context.Entry(entity);
+            if (entry != null)
+            {
+                entry.State = EntityState.Detached;
+            }
         }
     }
 }

@@ -256,6 +256,10 @@ namespace TorreClou.Application.Services
             if (originalAmountInUsd <= 0)
                 return Result<Invoice>.Failure("INVALID_AMOUNT", "Amount must be positive.");
 
+            // Detach the RequestedFile entity from the change tracker to prevent EF Core
+            // from trying to re-insert/update it when saving the Invoice
+            unitOfWork.Detach(torrentFile);
+
             var exchangeRate = 1.0m;
             var finalAmountUsd = originalAmountInUsd;
 
