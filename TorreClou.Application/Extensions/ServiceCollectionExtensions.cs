@@ -23,6 +23,7 @@ namespace TorreClou.Application.Extensions
             services.AddScoped<ITorrentHealthService, TorrentHealthService>();
             services.AddScoped<IQuotePricingService, QuotePricingService>();
             services.AddScoped<IJobService, JobService>();
+            services.AddScoped<ISyncJobsService, SyncJobsService>();
             services.AddScoped<IGoogleDriveAuthService, GoogleDriveAuthService>();
             services.AddScoped<IInvoiceService, InvoiceService>();
             services.AddScoped<IStorageProfilesService, StorageProfilesService>();
