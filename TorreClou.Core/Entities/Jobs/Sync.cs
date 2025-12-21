@@ -1,9 +1,10 @@
 using TorreClou.Core.Enums;
 using TorreClou.Core.Entities;
+using TorreClou.Core.Interfaces;
 
 namespace TorreClou.Core.Entities.Jobs
 {
-    public class Sync : BaseEntity
+    public class Sync : BaseEntity, IRecoverableJob
     {
         public int JobId { get; set; }
         public UserJob UserJob { get; set; } = null!;
@@ -22,6 +23,12 @@ namespace TorreClou.Core.Entities.Jobs
         
         // Navigation property for file-level progress
         public ICollection<S3SyncProgress> FileProgress { get; set; } = new List<S3SyncProgress>();
+
+        public JobType Type => JobType.Sync;
+
+        public DateTime? LastHeartbeat { get; set; }
+        public string? HangfireJobId { get; set; }
+        JobStatus IRecoverableJob.Status { get; set; }
     }
 }
 

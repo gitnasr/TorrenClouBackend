@@ -1,6 +1,5 @@
 using MonoTorrent;
 using TorreClou.Core.DTOs.Torrents;
-using TorreClou.Core.Entities.Torrents;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
@@ -8,105 +7,108 @@ using RequestedFile = TorreClou.Core.Entities.Torrents.RequestedFile;
 
 namespace TorreClou.Application.Services.Torrent
 {
-    public class TorrentService(IUnitOfWork unitOfWork, ITrackerScraper trackerScraper, IBlobStorageService blobStorageService) : ITorrentService
+    public class TorrentService(
+        IUnitOfWork unitOfWork,
+        ITrackerScraper trackerScraper,
+        IBlobStorageService blobStorageService) : ITorrentService
     {
+        // Ideally move this to configuration
+        private static readonly string[] FallbackTrackers =
+        [
+            "udp://tracker.openbittorrent.com:80",
+            "udp://tracker.opentrackr.org:1337/announce",
+            "udp://tracker.coppersurfer.tk:6969/announce",
+            "udp://exodus.desync.com:6969/announce",
+            "udp://open.stealth.si:80/announce",
+            "udp://tracker.torrent.eu.org:451/announce"
+        ];
 
         public async Task<Result<TorrentInfoDto>> GetTorrentInfoFromTorrentFileAsync(Stream fileStream)
         {
             try
             {
+                // Ensure stream is at start
+                if (fileStream.CanSeek && fileStream.Position != 0) fileStream.Position = 0;
+
                 var torrent = MonoTorrent.Torrent.Load(fileStream);
 
-                // ----- Extract Trackers -----
-                var trackers = new List<string>();
+                // 1. Extract Trackers (Clean LINQ)
+                var trackers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                // 2) announce-list (tiers)
                 if (torrent.AnnounceUrls != null)
                 {
-                    var list = torrent.AnnounceUrls
-                        .SelectMany(tier => tier)
-                        .Where(url => !string.IsNullOrWhiteSpace(url))
-                        .Distinct()
-                        .ToList();
-
-                    trackers.AddRange(list);
+                    foreach (var tier in torrent.AnnounceUrls)
+                    {
+                        foreach (var url in tier)
+                        {
+                            if (!string.IsNullOrWhiteSpace(url)) trackers.Add(url);
+                        }
+                    }
                 }
 
-                trackers = trackers
+                // Filter for UDP only (for scraper compatibility)
+                var udpTrackers = trackers
                     .Where(t => t.StartsWith("udp://", StringComparison.OrdinalIgnoreCase))
-                    .Distinct()
                     .ToList();
 
-
-                string? hash = torrent.InfoHashes.V1?.ToHex();
-
+                // 2. Validate Hash
+                var hash = torrent.InfoHashes.V1?.ToHex();
                 if (string.IsNullOrEmpty(hash))
                 {
-                    // v2-only torrents cannot be scraped by UDP trackers.
-                    return Result<TorrentInfoDto>.Failure(
-                        "This torrent has no v1 (SHA1) hash. UDP trackers cannot scrape v2-only torrents."
-                    );
+                    return Result<TorrentInfoDto>.Failure("V2_ONLY_NOT_SUPPORTED",
+                        "This torrent has no v1 (SHA1) hash. System currently requires v1 support.");
                 }
 
-                // If no trackers found, fallback to public trackers
-                if (trackers.Count == 0)
+                // 3. Fallback Trackers
+                if (udpTrackers.Count == 0)
                 {
-                    trackers.AddRange(new[]
-                    {
-                        "udp://tracker.openbittorrent.com:80",
-                        "udp://tracker.opentrackr.org:1337/announce",
-                        "udp://tracker.coppersurfer.tk:6969/announce",
-                        "udp://exodus.desync.com:6969/announce"
-                    });
+                    udpTrackers.AddRange(FallbackTrackers);
                 }
-                var scrape = await trackerScraper.GetScrapeResultsAsync(
-              hash,
-              trackers
-          );
-                // ----- Build DTO -----
+
+                // 4. Scrape Health (Ideally with short timeout)
+                // We pass the hash and list to the scraper service
+                var scrape = await trackerScraper.GetScrapeResultsAsync(hash, udpTrackers);
+
+                // 5. Build DTO
                 var dto = new TorrentInfoDto
                 {
                     Name = torrent.Name,
                     InfoHash = hash,
                     TotalSize = torrent.Size,
-                    Trackers = trackers,
+                    Trackers = udpTrackers,
                     Files = torrent.Files.Select((f, index) => new TorrentFileDto
                     {
                         Index = index,
                         Path = f.Path,
                         Size = f.Length
                     }).ToList(),
-                    ScrapeResult =scrape
-                  
+                    ScrapeResult = scrape
                 };
 
                 return Result.Success(dto);
             }
             catch (Exception ex)
             {
-                return Result<TorrentInfoDto>.Failure($"Corrupted torrent file: {ex.Message}");
+                return Result<TorrentInfoDto>.Failure("INVALID_TORRENT", $"Failed to parse torrent file: {ex.Message}");
             }
         }
 
-
         public async Task<Result<RequestedFile>> FindOrCreateTorrentFile(RequestedFile torrent, Stream? fileStream = null)
         {
-            var searchCriteria = new BaseSpecification<RequestedFile>(t => t.InfoHash == torrent.InfoHash && t.UploadedByUserId == torrent.UploadedByUserId);
+            // Check if this specific user has already uploaded this torrent
+            var searchCriteria = new BaseSpecification<RequestedFile>(t =>
+                t.InfoHash == torrent.InfoHash &&
+                t.UploadedByUserId == torrent.UploadedByUserId);
 
             var existingTorrent = await unitOfWork.Repository<RequestedFile>().GetEntityWithSpec(searchCriteria);
 
+            // LOGIC BRANCH 1: Entity Exists
             if (existingTorrent != null)
             {
-                // If file exists but has no DirectUrl and we have a stream, upload it
+                // If DirectUrl is missing but we have a stream, repair it (Upload)
                 if (string.IsNullOrEmpty(existingTorrent.DirectUrl) && fileStream != null)
                 {
-                    fileStream.Position = 0;
-                    var uploadResult = await blobStorageService.UploadAsync(
-                        fileStream,
-                        $"{existingTorrent.InfoHash}.torrent",
-                        "application/x-bittorrent"
-                    );
-
+                    var uploadResult = await UploadTorrentBlobAsync(fileStream, existingTorrent.InfoHash);
                     if (uploadResult.IsSuccess)
                     {
                         existingTorrent.DirectUrl = uploadResult.Value;
@@ -117,26 +119,33 @@ namespace TorreClou.Application.Services.Torrent
                 return Result.Success(existingTorrent);
             }
 
-            // Upload file to blob storage if stream is provided
+            // LOGIC BRANCH 2: New Entity
+            // Upload to blob storage if stream provided
             if (fileStream != null)
             {
-                fileStream.Position = 0;
-                var uploadResult = await blobStorageService.UploadAsync(
-                    fileStream,
-                    $"{torrent.InfoHash}.torrent",
-                    "application/x-bittorrent"
-                );
-
+                var uploadResult = await UploadTorrentBlobAsync(fileStream, torrent.InfoHash);
                 if (uploadResult.IsSuccess)
                 {
                     torrent.DirectUrl = uploadResult.Value;
                 }
+               
             }
 
             unitOfWork.Repository<RequestedFile>().Add(torrent);
             await unitOfWork.Complete();
 
             return Result.Success(torrent);
+        }
+
+        private async Task<Result<string>> UploadTorrentBlobAsync(Stream fileStream, string infoHash)
+        {
+            if (fileStream.CanSeek) fileStream.Position = 0;
+
+            return await blobStorageService.UploadAsync(
+                fileStream,
+                $"{infoHash}.torrent",
+                "application/x-bittorrent"
+            );
         }
     }
 }

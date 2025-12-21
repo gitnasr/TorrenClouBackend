@@ -1,126 +1,54 @@
+using Hangfire;
 using StackExchange.Redis;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Infrastructure.Workers;
 using TorreClou.Worker.Services;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.DependencyInjection;
-using Hangfire;
 
 namespace TorreClou.Worker
 {
-    /// <summary>
-    /// Redis stream consumer that listens for new torrent jobs and enqueues them to Hangfire.
-    /// This provides decoupled event-driven job dispatch from the API layer.
-    /// </summary>
-    public class TorrentWorker : BaseStreamWorker
+    public class TorrentWorker(
+        ILogger<TorrentWorker> logger,
+        IConnectionMultiplexer redis,
+        IServiceScopeFactory scopeFactory) : BaseStreamWorker(logger, redis, scopeFactory)
     {
-        private readonly IServiceScopeFactory _serviceScopeFactory;
-
         protected override string StreamKey => "jobs:stream";
         protected override string ConsumerGroupName => "torrent-workers";
 
-        public TorrentWorker(
-            ILogger<TorrentWorker> logger,
-            IConnectionMultiplexer redis,
-            IServiceScopeFactory serviceScopeFactory) : base(logger, redis)
+        protected override async Task<bool> ProcessJobAsync(StreamEntry entry, IServiceProvider services, CancellationToken token)
         {
-            _serviceScopeFactory = serviceScopeFactory;
-            Logger.LogInformation("[TORRENT_WORKER] TorrentWorker initialized | Stream: {Stream} | Group: {Group}", 
-                StreamKey, ConsumerGroupName);
-        }
-
-        protected override async Task<bool> ProcessJobAsync(StreamEntry entry, CancellationToken cancellationToken)
-        {
-            using var scope = _serviceScopeFactory.CreateScope();
-            var backgroundJobClient = scope.ServiceProvider.GetRequiredService<IBackgroundJobClient>();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-
-            try
+            // 1. Use Base Helper for Parsing
+            var jobId = ParseJobId(entry);
+            if (!jobId.HasValue)
             {
-                // Parse job data from stream entry
-                var jobIdStr = entry["jobId"].ToString();
-                var jobTypeStr = entry["jobType"].ToString();
+                Logger.LogWarning("Invalid JobId in stream. Acking to remove.");
+                return true; // Return true to Ack and remove invalid message
+            }
 
-                if (!int.TryParse(jobIdStr, out var jobId))
-                {
-                    Logger.LogError("[WORKER] Invalid jobId in stream entry: {JobId}", jobIdStr);
-                    return false;
-                }
+            // 2. Resolve services directly from the provided scoped provider
+            var unitOfWork = services.GetRequiredService<IUnitOfWork>();
+            var hangfireClient = services.GetRequiredService<IBackgroundJobClient>();
 
-                // Check if this is a torrent job
-                if (!Enum.TryParse<JobType>(jobTypeStr, out var jobType) || jobType != JobType.Torrent)
-                {
-                    Logger.LogDebug("[WORKER] Skipping non-torrent job | JobId: {JobId} | JobType: {JobType}", jobId, jobTypeStr);
-                    return true; // Not an error, just not our job type
-                }
+            // 3. Business Logic
+            var job = await unitOfWork.Repository<UserJob>().GetByIdAsync(jobId.Value);
+            if (job == null) return true; // Job deleted? Ack it.
 
-                // Fetch job from database to update with Hangfire job ID
-                var job = await unitOfWork.Repository<UserJob>().GetByIdAsync(jobId);
-                if (job == null)
-                {
-                    Logger.LogError("[WORKER] Job not found in database | JobId: {JobId}", jobId);
-                    return false;
-                }
-
-                // Note: Lease acquisition is handled by BaseJob.ExecuteAsync in Hangfire
-                // We just enqueue the job here - Hangfire will handle duplicate prevention via leases
-
-                Logger.LogInformation("[WORKER] Enqueuing torrent download job to Hangfire | JobId: {JobId}", jobId);
-
-                // Enqueue to Hangfire for reliable execution with retry capability
-                var hangfireJobId = backgroundJobClient.Enqueue<TorrentDownloadJob>(
-                    service => service.ExecuteAsync(jobId, CancellationToken.None));
-
-                // Store Hangfire job ID in database for state reconciliation
-                job.HangfireJobId = hangfireJobId;
-                job.CurrentState = "Queued for processing";
-                await unitOfWork.Complete();
-
-                Logger.LogInformation(
-                    "[WORKER] Torrent job enqueued | JobId: {JobId} | HangfireJobId: {HangfireJobId}",
-                    jobId, hangfireJobId);
-
+            if (!string.IsNullOrEmpty(job.HangfireJobId))
+            {
+                Logger.LogInformation("Job {Id} already enqueued.", jobId);
                 return true;
             }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "[WORKER] Error enqueuing torrent job to Hangfire");
-                
-                // Try to update job status to FAILED
-                await TryMarkJobFailedAsync(entry, ex.Message);
-                
-                return false;
-            }
-        }
 
-        private async Task TryMarkJobFailedAsync(StreamEntry entry, string errorMessage)
-        {
-            try
-            {
-                using var errorScope = _serviceScopeFactory.CreateScope();
-                var errorUnitOfWork = errorScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-                
-                var jobIdStr = entry["jobId"].ToString();
-                if (int.TryParse(jobIdStr, out var jobId))
-                {
-                    var job = await errorUnitOfWork.Repository<UserJob>().GetByIdAsync(jobId);
-                    if (job != null)
-                    {
-                        job.Status = JobStatus.FAILED;
-                        job.ErrorMessage = $"Failed to enqueue job: {errorMessage}";
-                        job.CompletedAt = DateTime.UtcNow;
-                        await errorUnitOfWork.Complete();
-                        
-                        Logger.LogInformation("[WORKER] Job marked as failed | JobId: {JobId}", jobId);
-                    }
-                }
-            }
-            catch (Exception updateEx)
-            {
-                Logger.LogError(updateEx, "[WORKER] Failed to update job status to FAILED");
-            }
+            var hfId = hangfireClient.Enqueue<TorrentDownloadJob>(x => x.ExecuteAsync(jobId.Value, CancellationToken.None));
+
+            job.HangfireJobId = hfId;
+            job.Status = JobStatus.QUEUED;
+            await unitOfWork.Complete();
+
+            Logger.LogInformation("Enqueued Job {Id} -> HF {HfId}", jobId, hfId);
+
+            return true; // Successfully processed -> Base class will ACK
         }
     }
 }

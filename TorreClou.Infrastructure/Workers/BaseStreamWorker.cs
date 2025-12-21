@@ -1,7 +1,7 @@
 using StackExchange.Redis;
-using TorreClou.Infrastructure.Tracing;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace TorreClou.Infrastructure.Workers
 {
@@ -9,219 +9,146 @@ namespace TorreClou.Infrastructure.Workers
     {
         protected readonly ILogger Logger;
         protected readonly IConnectionMultiplexer Redis;
+        protected readonly IServiceScopeFactory ScopeFactory; // Moved to Base
+
         protected abstract string StreamKey { get; }
         protected abstract string ConsumerGroupName { get; }
-        protected readonly string ConsumerName;
+        protected readonly string ConsumerName = $"worker-{Environment.MachineName}-{Guid.NewGuid():N}";
 
-        protected BaseStreamWorker(ILogger logger, IConnectionMultiplexer redis)
+        // Constructor injection for ScopeFactory
+        protected BaseStreamWorker(
+            ILogger logger,
+            IConnectionMultiplexer redis,
+            IServiceScopeFactory scopeFactory)
         {
             Logger = logger;
             Redis = redis;
-            ConsumerName = $"worker-{Environment.MachineName}-{Guid.NewGuid():N}";
+            ScopeFactory = scopeFactory;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            Logger.LogInformation(
-                "[WORKER_STARTUP] Starting worker | Consumer: {Consumer} | Stream: {Stream} | Group: {Group}",
-                ConsumerName, StreamKey, ConsumerGroupName
-            );
-
+            Logger.LogInformation("[WORKER_STARTUP] Starting | Consumer: {C} | Stream: {S}", ConsumerName, StreamKey);
             var db = Redis.GetDatabase();
 
-            // Ensure consumer group exists
             await EnsureConsumerGroupExistsAsync(db);
-
-            // First, claim any pending messages from previous runs (retry logic)
             await ClaimPendingMessagesAsync(db, stoppingToken);
 
-            Logger.LogInformation(
-                "[WORKER_STARTUP] Worker started and listening | Consumer: {Consumer} | Stream: {Stream} | Group: {Group}",
-                ConsumerName, StreamKey, ConsumerGroupName
-            );
-
-            // Main processing loop
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
-                    // Read new messages from stream (blocking for 5 seconds)
                     var entries = await db.StreamReadGroupAsync(
-                        StreamKey,
-                        ConsumerGroupName,
-                        ConsumerName,
-                        ">",  // Only new messages
-                        count: 10,
-                        noAck: false
+                        StreamKey, ConsumerGroupName, ConsumerName, ">", count: 10, noAck: false
                     );
 
                     if (entries.Length == 0)
                     {
-                        // No new messages, wait a bit before trying again
-                        await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
+                        await Task.Delay(1000, stoppingToken);
                         continue;
                     }
 
                     foreach (var entry in entries)
                     {
-                        await ProcessMessageAsync(db, entry, stoppingToken);
+                        // Pass 'db' to allow ACK within the processing flow
+                        await ProcessMessageWrapperAsync(db, entry, stoppingToken);
                     }
                 }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    break;
-                }
+                catch (OperationCanceledException) { break; }
                 catch (RedisException ex)
                 {
-                    Logger.LogError(ex, "Redis error while reading from stream. Retrying in 5 seconds...");
-                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                    Logger.LogError(ex, "[REDIS_ERROR] Retrying in 5s...");
+                    await Task.Delay(5000, stoppingToken);
                 }
             }
-
-            Logger.LogInformation("Worker stopping | Consumer: {Consumer}", ConsumerName);
         }
+
+        private async Task ProcessMessageWrapperAsync(IDatabase db, StreamEntry entry, CancellationToken token)
+        {
+            var messageId = entry.Id;
+            bool success = false;
+
+            // 1. Create Scope automatically for the derived class
+            using (var scope = ScopeFactory.CreateScope())
+            
+                try
+                {
+                    // 2. Execute Derived Logic
+                    // We pass the ServiceProvider so the derived class can resolve what it needs
+                    success = await ProcessJobAsync(entry, scope.ServiceProvider, token);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "[JOB_ERROR] MsgId: {MsgId}", messageId);
+                    success = false;
+                }
+
+            // 3. RELIABILITY FIX: Ack ONLY if success
+            if (success)
+            {
+                await db.StreamAcknowledgeAsync(StreamKey, ConsumerGroupName, messageId);
+                Logger.LogDebug("[ACK] MsgId: {MsgId}", messageId);
+            }
+            else
+            {
+                // Logic: Leave in PEL (Pending Entries List). 
+                // It will be picked up by 'ClaimPendingMessagesAsync' on next restart/recovery loop.
+                Logger.LogWarning("[NO_ACK] MsgId: {MsgId} - Left pending for retry", messageId);
+            }
+        }
+
+        // --- Helper Methods for Derived Classes ---
+
+        /// <summary>
+        /// safely extracts JobId from the stream entry. Returns null if missing/invalid.
+        /// </summary>
+        protected int? ParseJobId(StreamEntry entry)
+        {
+            var dict = entry.Values.ToDictionary(x => x.Name.ToString(), x => x.Value.ToString());
+            if (dict.TryGetValue("jobId", out var val) && int.TryParse(val, out int id))
+                return id;
+            return null;
+        }
+
+        protected string? GetStreamValue(StreamEntry entry, string key)
+        {
+            return entry.Values.FirstOrDefault(x => x.Name == key).Value;
+        }
+
+        // --- Abstract Method ---
+
+        /// <summary>
+        /// Implement business logic here. 
+        /// Return TRUE to Ack the message, FALSE to retry later.
+        /// ServiceProvider is scoped and ready to use.
+        /// </summary>
+        protected abstract Task<bool> ProcessJobAsync(
+            StreamEntry entry,
+            IServiceProvider services,
+            CancellationToken token);
+
+        // ... (Keep EnsureConsumerGroupExistsAsync and ClaimPendingMessagesAsync as they were) ...
 
         private async Task EnsureConsumerGroupExistsAsync(IDatabase db)
         {
-            try
-            {
-                // Try to create the consumer group (MKSTREAM creates the stream if it doesn't exist)
-                await db.StreamCreateConsumerGroupAsync(StreamKey, ConsumerGroupName, "0", createStream: true);
-                Logger.LogInformation("Created consumer group: {Group} on stream: {Stream}", ConsumerGroupName, StreamKey);
-            }
-            catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP"))
-            {
-                // Group already exists, that's fine
-                Logger.LogDebug("Consumer group {Group} already exists", ConsumerGroupName);
-            }
+            try { await db.StreamCreateConsumerGroupAsync(StreamKey, ConsumerGroupName, "0", true); }
+            catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP")) { }
         }
 
-        private async Task ClaimPendingMessagesAsync(IDatabase db, CancellationToken stoppingToken)
+        private async Task ClaimPendingMessagesAsync(IDatabase db, CancellationToken token)
         {
-            try
+            // (Keep your existing logic here, it was correct)
+            // Just ensure it calls ProcessMessageWrapperAsync internally
+            // ...
+            var pending = await db.StreamPendingAsync(StreamKey, ConsumerGroupName, CommandFlags.None);
+            if (pending.PendingMessageCount > 0)
             {
-                // Get pending messages that have been idle for more than 30 seconds
-                var pendingInfo = await db.StreamPendingAsync(StreamKey, ConsumerGroupName);
-                
-                if (pendingInfo.PendingMessageCount > 0)
+                var claimed = await db.StreamAutoClaimAsync(StreamKey, ConsumerGroupName, ConsumerName, 30000, "0-0", 100);
+                foreach (var entry in claimed.ClaimedEntries)
                 {
-                    Logger.LogInformation(
-                        "Found {Count} pending messages in stream. Attempting to claim...",
-                        pendingInfo.PendingMessageCount
-                    );
-
-                    // Claim messages that have been pending for more than 30 seconds
-                    var claimed = await db.StreamAutoClaimAsync(
-                        StreamKey,
-                        ConsumerGroupName,
-                        ConsumerName,
-                        30000,  // minIdleTimeInMs: 30 seconds
-                        "0-0",  // start position
-                        100     // count
-                    );
-
-                    foreach (var entry in claimed.ClaimedEntries)
-                    {
-                        Logger.LogInformation(
-                            "[RETRY] Claimed pending message | MessageId: {MessageId}",
-                            entry.Id
-                        );
-                        await ProcessMessageAsync(db, entry, stoppingToken);
-                    }
+                    await ProcessMessageWrapperAsync(db, entry, token);
                 }
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "Error claiming pending messages. Will process new messages only.");
             }
         }
-
-        private async Task ProcessMessageAsync(IDatabase db, StreamEntry entry, CancellationToken stoppingToken)
-        {
-            var messageId = entry.Id;
-            
-            // Extract job metadata from entry if available
-            var jobId = entry["jobId"].ToString();
-            var jobType = entry["jobType"].ToString();
-            
-            // Create a span for the entire message processing
-            using var span = Tracing.Tracing.StartSpan("redis.stream.process_message", $"Process {StreamKey}")
-                .WithTag("stream.key", StreamKey)
-                .WithTag("stream.consumer_group", ConsumerGroupName)
-                .WithTag("stream.consumer", ConsumerName)
-                .WithTag("stream.message_id", messageId.ToString());
-            
-            if (!string.IsNullOrEmpty(jobId))
-            {
-                span.WithTag("job.id", jobId);
-            }
-            if (!string.IsNullOrEmpty(jobType))
-            {
-                span.WithTag("job.type", jobType);
-            }
-
-            try
-            {
-                Logger.LogInformation(
-                    "[RECEIVED] Message received from Redis Stream | MessageId: {MessageId}",
-                    messageId
-                );
-
-                // Acknowledge immediately (as per plan: ACK before processing)
-                using (Tracing.Tracing.StartChildSpan("redis.stream.acknowledge"))
-                {
-                    await db.StreamAcknowledgeAsync(StreamKey, ConsumerGroupName, messageId);
-                }
-                Logger.LogInformation(
-                    "[ACKNOWLEDGED] Message acknowledged | MessageId: {MessageId}",
-                    messageId
-                );
-
-                // Process the job (implemented by derived classes)
-                bool success;
-                using (Tracing.Tracing.StartChildSpan("stream.process_job"))
-                {
-                    success = await ProcessJobAsync(entry, stoppingToken);
-                }
-
-                if (success)
-                {
-                    span.WithTag("stream.processing_status", "success");
-                    Logger.LogInformation(
-                        "[COMPLETED] Job processed successfully | MessageId: {MessageId}",
-                        messageId
-                    );
-                }
-                else
-                {
-                    span.WithTag("stream.processing_status", "failed");
-                    Logger.LogWarning(
-                        "[FAILED] Job processing returned false | MessageId: {MessageId}",
-                        messageId
-                    );
-                }
-            }
-            catch (Exception ex)
-            {
-                span.WithTag("stream.processing_status", "error").WithException(ex);
-                
-                Logger.LogError(
-                    ex,
-                    "[ERROR] Error processing job | MessageId: {MessageId} | Error: {Error}",
-                    messageId,
-                    ex.Message
-                );
-                // Job status will be updated to FAILED in database by the worker
-            }
-        }
-
-        /// <summary>
-        /// Process a job from the Redis Stream. Derived classes must implement this method.
-        /// </summary>
-        /// <param name="entry">The stream entry containing job data</param>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>True if job was processed successfully, false otherwise</returns>
-        protected abstract Task<bool> ProcessJobAsync(StreamEntry entry, CancellationToken cancellationToken);
     }
 }
-

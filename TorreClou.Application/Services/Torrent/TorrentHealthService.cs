@@ -14,10 +14,10 @@ namespace TorreClou.Application.Services.Torrent
 
             decimal ratio = leechers == 0 ? seeders : (decimal)seeders / leechers;
 
-            var isComplete = seeders > 0;                        // لو مفيش seeders يبقى غير كامل
-            var isDead = seeders == 0 && leechers == 0;          // swarm ميت
-            var isWeak = seeders <= 2;                           // ضعيف
-            var isHealthy = seeders >= 10;                       // ممتاز
+            var isComplete = seeders > 0;                    
+            var isDead = seeders == 0 && leechers == 0;        
+            var isWeak = seeders <= 2;                         
+            var isHealthy = seeders >= 10;                   
 
             // --- Health Score ---
             // 50% seeders count

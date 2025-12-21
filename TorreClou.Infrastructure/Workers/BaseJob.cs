@@ -1,9 +1,9 @@
+using Hangfire.Common;
+using Microsoft.Extensions.Logging;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Specifications;
-using TorreClou.Infrastructure.Tracing;
-using Microsoft.Extensions.Logging;
 
 namespace TorreClou.Infrastructure.Workers
 {
@@ -12,67 +12,46 @@ namespace TorreClou.Infrastructure.Workers
     /// Implements Template Method pattern for consistent job lifecycle management.
     /// </summary>
     /// <typeparam name="TJob">The concrete job type for logger categorization.</typeparam>
-    public abstract class BaseJob<TJob> where TJob : class
+    public abstract class BaseJob<TJob>(
+        IUnitOfWork unitOfWork,
+        ILogger<TJob> logger) where TJob : class
     {
-        protected readonly IUnitOfWork UnitOfWork;
-        protected readonly ILogger<TJob> Logger;
+        protected readonly IUnitOfWork UnitOfWork = unitOfWork;
+        protected readonly ILogger<TJob> Logger = logger;
 
         /// <summary>
         /// Log prefix for consistent logging (e.g., "[DOWNLOAD]", "[UPLOAD]").
         /// </summary>
         protected abstract string LogPrefix { get; }
 
-        protected BaseJob(
-            IUnitOfWork unitOfWork, 
-            ILogger<TJob> logger)
-        {
-            UnitOfWork = unitOfWork;
-            Logger = logger;
-        }
-
         /// <summary>
         /// Template method that orchestrates the job execution lifecycle.
         /// Subclasses should override ExecuteCoreAsync for specific job logic.
-        /// Wrapped in Datadog span for distributed tracing.
         /// </summary>
         public async Task ExecuteAsync(int jobId, CancellationToken cancellationToken = default)
         {
             var operationName = $"job.{LogPrefix.Trim('[', ']').ToLowerInvariant()}.execute";
             
-            using var span = Tracing.Tracing.StartSpan(operationName, $"Job {jobId}")
-                .WithTag("job.id", jobId)
-                .WithTag("job.type", GetType().Name)
-                .WithTag("job.prefix", LogPrefix);
 
             Logger.LogInformation("{LogPrefix} Starting job | JobId: {JobId}", LogPrefix, jobId);
-
-            UserJob? job = null;
+            UserJob? job = null; 
 
             try
             {
                 // 1. Load job from database
-                using (Tracing.Tracing.StartChildSpan("job.load"))
-                {
-                    job = await LoadJobAsync(jobId);
-                }
-                
+                 job = await LoadJobAsync(jobId);
+
+
                 if (job == null)
                 {
-                    span.WithTag("job.status", "not_found").AsError();
                     return;
                 }
-
-                // Add job details to span
-                span.WithTag("job.user_id", job.UserId)
-                    .WithTag("job.status.initial", job.Status.ToString());
 
                 // 2. Check if job is FAILED - never reprocess failed jobs
                 if (job.Status == JobStatus.FAILED)
                 {
                     Logger.LogWarning("{LogPrefix} Job is FAILED and will not be reprocessed | JobId: {JobId}", 
                         LogPrefix, jobId);
-                    span.WithTag("job.status", "failed_skipped")
-                        .WithTag("job.status.final", job.Status.ToString());
                     return;
                 }
 
@@ -81,51 +60,35 @@ namespace TorreClou.Infrastructure.Workers
                 {
                     Logger.LogInformation("{LogPrefix} Job already finished | JobId: {JobId} | Status: {Status}", 
                         LogPrefix, jobId, job.Status);
-                    span.WithTag("job.status", "already_terminated")
-                        .WithTag("job.status.final", job.Status.ToString());
                     return;
                 }
 
                 // 4. Execute the core job logic
-                using (Tracing.Tracing.StartChildSpan("job.execute_core"))
-                {
-                    await ExecuteCoreAsync(job, cancellationToken);
-                }
-                
-                span.WithTag("job.status", "success")
-                    .WithTag("job.status.final", job.Status.ToString());
+                await ExecuteCoreAsync(job, cancellationToken);
+
+
             }
             catch (OperationCanceledException)
             {
-                Logger.LogWarning("{LogPrefix} Job cancelled | JobId: {JobId}", LogPrefix, jobId);
-                span.WithTag("job.status", "cancelled").AsError();
-                
+                Logger.LogError("{LogPrefix} Job cancelled | JobId: {JobId}", LogPrefix, jobId);
                 if (job != null)
-                {
-                    span.WithTag("job.status.final", job.Status.ToString());
                     await OnJobCancelledAsync(job);
-                }
+
                 throw; // Let Hangfire handle the cancellation
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "{LogPrefix} Fatal error | JobId: {JobId}", LogPrefix, jobId);
+                Logger.LogCritical(ex, "{LogPrefix} Fatal error | JobId: {JobId}", LogPrefix, jobId);
                 
-                span.WithTag("job.status", "error").WithException(ex);
 
                 if (job != null)
                 {
                     // Check if retries are available before marking as failed
                     bool hasRetries = HasRetriesAvailable(job);
                     // MarkJobFailedAsync will determine the correct status, so we don't need to set it here
-                    // Just log for tracing
-                    span.WithTag("job.has_retries", hasRetries.ToString());
-                    
                     await OnJobErrorAsync(job, ex);
                     await MarkJobFailedAsync(job, ex.Message, hasRetries);
                     
-                    // Update span with final status after MarkJobFailedAsync sets it
-                    span.WithTag("job.status.final", job.Status.ToString());
                 }
 
                 throw; // Let Hangfire retry if attempts remain
@@ -204,7 +167,7 @@ namespace TorreClou.Infrastructure.Workers
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "{LogPrefix} Failed to update heartbeat | JobId: {JobId}", LogPrefix, job.Id);
+                Logger.LogCritical(ex, "{LogPrefix} Failed to update heartbeat | JobId: {JobId}", LogPrefix, job.Id);
             }
         }
 
@@ -225,7 +188,6 @@ namespace TorreClou.Infrastructure.Workers
                         JobStatus.QUEUED or JobStatus.DOWNLOADING or JobStatus.TORRENT_FAILED or JobStatus.TORRENT_DOWNLOAD_RETRY => JobStatus.TORRENT_DOWNLOAD_RETRY,
                         JobStatus.SYNCING or JobStatus.SYNC_RETRY => JobStatus.SYNC_RETRY,
                         JobStatus.UPLOADING or JobStatus.UPLOAD_RETRY => JobStatus.UPLOAD_RETRY,
-                        _ => JobStatus.RETRYING // Fallback to generic retry state
                     };
                     
                     job.Status = retryStatus;
@@ -283,7 +245,7 @@ namespace TorreClou.Infrastructure.Workers
 
             // If job is in any retry state, assume retries might still be available
             // (Hangfire will eventually mark as FAILED when exhausted)
-            if (job.Status == JobStatus.RETRYING ||
+            if (
                 job.Status == JobStatus.TORRENT_DOWNLOAD_RETRY ||
                 job.Status == JobStatus.UPLOAD_RETRY ||
                 job.Status == JobStatus.SYNC_RETRY)

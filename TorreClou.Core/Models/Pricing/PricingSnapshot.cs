@@ -19,5 +19,6 @@ namespace TorreClou.Core.Models.Pricing
         public decimal FinalPrice { get; set; }
 
         public DateTime CalculatedAt { get; set; } = DateTime.UtcNow;
+        public double CalculatedSizeInGb { get; set; }
     }
 }

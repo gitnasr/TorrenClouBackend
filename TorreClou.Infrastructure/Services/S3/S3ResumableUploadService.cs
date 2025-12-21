@@ -7,7 +7,7 @@ using TorreClou.Core.Shared;
 using TorreClou.Infrastructure.Settings;
 using PartETag = TorreClou.Core.Interfaces.PartETag;
 
-namespace TorreClou.Infrastructure.Services
+namespace TorreClou.Infrastructure.Services.S3
 {
     public class S3ResumableUploadService : IS3ResumableUploadService
     {

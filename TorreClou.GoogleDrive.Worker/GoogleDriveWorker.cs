@@ -1,108 +1,71 @@
 using StackExchange.Redis;
 using TorreClou.Core.Entities.Jobs;
+using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Infrastructure.Workers;
-using TorreClou.GoogleDrive.Worker.Services;
+using TorreClou.GoogleDrive.Worker.Services; 
 using Hangfire;
-using TorreClou.Core.Enums;
 
 namespace TorreClou.GoogleDrive.Worker
 {
-
     public class GoogleDriveWorker(
         ILogger<GoogleDriveWorker> logger,
         IConnectionMultiplexer redis,
-        IServiceScopeFactory serviceScopeFactory) : BaseStreamWorker(logger, redis)
+        IServiceScopeFactory scopeFactory) : BaseStreamWorker(logger, redis, scopeFactory)
     {
         protected override string StreamKey => "uploads:googledrive:stream";
         protected override string ConsumerGroupName => "googledrive-workers";
 
-        protected override async Task<bool> ProcessJobAsync(StreamEntry entry, CancellationToken cancellationToken)
+        protected override async Task<bool> ProcessJobAsync(StreamEntry entry, IServiceProvider services, CancellationToken token)
         {
-            using var scope = serviceScopeFactory.CreateScope();
-            var backgroundJobClient = scope.ServiceProvider.GetRequiredService<IBackgroundJobClient>();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-
-            try
+            // 1. Use Base Helper for Safe Parsing
+            var jobId = ParseJobId(entry);
+            if (!jobId.HasValue)
             {
-                // Parse job data from stream entry
-                var jobIdStr = entry["jobId"].ToString();
-                var downloadPath = entry["downloadPath"].ToString();
-                var storageProfileIdStr = entry["storageProfileId"].ToString();
-
-                if (!int.TryParse(jobIdStr, out var jobId))
-                {
-                    Logger.LogError("[GOOGLE_DRIVE_WORKER] Invalid jobId in stream entry: {JobId}", jobIdStr);
-                    return false;
-                }
-
-                if (!int.TryParse(storageProfileIdStr, out var storageProfileId))
-                {
-                    Logger.LogError("[GOOGLE_DRIVE_WORKER] Invalid storageProfileId in stream entry: {StorageProfileId}", storageProfileIdStr);
-                    return false;
-                }
-
-                // Fetch job from database for validation
-                var job = await unitOfWork.Repository<UserJob>().GetByIdAsync(jobId);
-                if (job == null)
-                {
-                    Logger.LogError("[GOOGLE_DRIVE_WORKER] Job not found in database | JobId: {JobId}", jobId);
-                    return false;
-                }
-
-                // Note: Lease acquisition is handled by BaseJob.ExecuteAsync in Hangfire
-                // We just enqueue the job here - Hangfire will handle duplicate prevention via leases
-
-                Logger.LogInformation("[GOOGLE_DRIVE_WORKER] Enqueuing Google Drive upload job to Hangfire | JobId: {JobId}", jobId);
-
-                // Enqueue to Hangfire for reliable execution with retry capability
-                var hangfireJobId = backgroundJobClient.Enqueue<GoogleDriveUploadJob>(
-                    service => service.ExecuteAsync(jobId, CancellationToken.None));
-
-                Logger.LogInformation(
-                    "[GOOGLE_DRIVE_WORKER] Google Drive upload job enqueued | JobId: {JobId} | HangfireJobId: {HangfireJobId}",
-                    jobId, hangfireJobId);
-
+                Logger.LogWarning("[GD_WORKER] Invalid/Missing JobId. Acking to remove.");
                 return true;
             }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "[GOOGLE_DRIVE_WORKER] Error enqueuing Google Drive upload job to Hangfire");
-                
-                // Try to update job status to FAILED
-                await TryMarkJobFailedAsync(entry, ex.Message);
-                
-                return false;
-            }
-        }
 
-        private async Task TryMarkJobFailedAsync(StreamEntry entry, string errorMessage)
-        {
-            try
+            // 2. Resolve Services (Scoped is handled by Base Class)
+            var unitOfWork = services.GetRequiredService<IUnitOfWork>();
+            var backgroundJobClient = services.GetRequiredService<IBackgroundJobClient>();
+
+            // 3. Load Job & Idempotency Check
+            var job = await unitOfWork.Repository<UserJob>().GetByIdAsync(jobId.Value);
+
+            if (job == null)
             {
-                using var errorScope = serviceScopeFactory.CreateScope();
-                var errorUnitOfWork = errorScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-                
-                var jobIdStr = entry["jobId"].ToString();
-                if (int.TryParse(jobIdStr, out var jobId))
-                {
-                    var job = await errorUnitOfWork.Repository<UserJob>().GetByIdAsync(jobId);
-                    if (job != null)
-                    {
-                        job.Status = TorreClou.Core.Enums.JobStatus.FAILED;
-                        job.ErrorMessage = $"Failed to enqueue upload job: {errorMessage}";
-                        job.CompletedAt = DateTime.UtcNow;
-                        await errorUnitOfWork.Complete();
-                        
-                        Logger.LogInformation("[GOOGLE_DRIVE_WORKER] Job marked as failed | JobId: {JobId}", jobId);
-                    }
-                }
+                Logger.LogError("[GD_WORKER] Job {Id} not found in DB. Acking.", jobId);
+                return true;
             }
-            catch (Exception updateEx)
+
+            // CRITICAL: Prevent duplicate uploads if worker restarts before ACK
+            if (!string.IsNullOrEmpty(job.HangfireJobId))
             {
-                Logger.LogError(updateEx, "[GOOGLE_DRIVE_WORKER] Failed to update job status to FAILED");
+                Logger.LogInformation("[GD_WORKER] Job {Id} already enqueued (HF: {HfId}). Skipping.",
+                    jobId, job.HangfireJobId);
+                return true;
             }
+
+            // 4. Enqueue to Hangfire
+            // We don't need to pass downloadPath/profileId manually; 
+            // the Job itself (GoogleDriveUploadJob) should load the entity from DB to get those details.
+            Logger.LogInformation("[GD_WORKER] Enqueuing Job {Id}...", jobId);
+
+            var hangfireJobId = backgroundJobClient.Enqueue<GoogleDriveUploadJob>(
+                service => service.ExecuteAsync(jobId.Value, CancellationToken.None));
+
+            // 5. Update State
+            job.HangfireJobId = hangfireJobId;
+            job.Status = JobStatus.PENDING_UPLOAD;
+            job.CurrentState = "Queued for Google Drive Upload";
+            job.LastHeartbeat = DateTime.UtcNow;
+
+            await unitOfWork.Complete();
+
+            Logger.LogInformation("[GD_WORKER] Success | JobId: {JobId} -> HF: {HfId}", jobId, hangfireJobId);
+
+            return true; // Base class handles the XACK
         }
     }
 }
-

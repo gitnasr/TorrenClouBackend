@@ -10,21 +10,24 @@ namespace TorreClou.Application.Services
     public class InvoiceService(IUnitOfWork unitOfWork) : IInvoiceService
     {
         public async Task<Result<PaginatedResult<InvoiceDto>>> GetUserInvoicesAsync(
-            int userId, 
-            int pageNumber, 
-            int pageSize, 
-            DateTime? dateFrom = null, 
+            int userId,
+            int pageNumber,
+            int pageSize,
+            DateTime? dateFrom = null,
             DateTime? dateTo = null)
         {
             var spec = new UserInvoicesSpecification(userId, pageNumber, pageSize, dateFrom, dateTo);
-            var countSpec = new BaseSpecification<Invoice>(invoice => 
-                invoice.UserId == userId &&
-                (dateFrom == null || invoice.CreatedAt >= dateFrom.Value) &&
-                (dateTo == null || invoice.CreatedAt <= dateTo.Value));
+
+            var countSpec = new BaseSpecification<Invoice>(i =>
+                i.UserId == userId &&
+                (!dateFrom.HasValue || i.CreatedAt >= dateFrom.Value) &&
+                (!dateTo.HasValue || i.CreatedAt <= dateTo.Value)
+            );
 
             var invoices = await unitOfWork.Repository<Invoice>().ListAsync(spec);
             var totalCount = await unitOfWork.Repository<Invoice>().CountAsync(countSpec);
 
+            // 3. Mapping
             var items = invoices.Select(invoice => new InvoiceDto
             {
                 Id = invoice.Id,
@@ -55,16 +58,14 @@ namespace TorreClou.Application.Services
 
         public async Task<Result<InvoiceDto>> GetInvoiceByIdAsync(int userId, int invoiceId)
         {
-            var spec = new BaseSpecification<Invoice>(invoice => invoice.Id == invoiceId && invoice.UserId == userId);
-            spec.AddInclude(invoice => invoice.TorrentFile);
-            spec.AddInclude(invoice => invoice.Job);
+            var spec = new BaseSpecification<Invoice>(i => i.Id == invoiceId && i.UserId == userId);
+            spec.AddInclude(i => i.TorrentFile);
+            spec.AddInclude(i => i.Job);
 
             var invoice = await unitOfWork.Repository<Invoice>().GetEntityWithSpec(spec);
 
             if (invoice == null)
-            {
                 return Result<InvoiceDto>.Failure("NOT_FOUND", "Invoice not found.");
-            }
 
             return Result.Success(new InvoiceDto
             {
@@ -88,18 +89,23 @@ namespace TorreClou.Application.Services
 
         public async Task<Result<InvoiceStatisticsDto>> GetUserInvoiceStatisticsAsync(int userId)
         {
-            var allInvoicesSpec = new BaseSpecification<Invoice>(invoice => invoice.UserId == userId);
-            var allInvoices = await unitOfWork.Repository<Invoice>().ListAsync(allInvoicesSpec);
 
-            var statistics = new InvoiceStatisticsDto
+            var totalCount = await unitOfWork.Repository<Invoice>()
+                .CountAsync(new BaseSpecification<Invoice>(i => i.UserId == userId));
+
+            var paidCount = await unitOfWork.Repository<Invoice>()
+                .CountAsync(new BaseSpecification<Invoice>(i => i.UserId == userId && i.PaidAt != null));
+
+            var unpaidCount = await unitOfWork.Repository<Invoice>()
+                .CountAsync(new BaseSpecification<Invoice>(i =>
+                    i.UserId == userId && i.PaidAt == null && i.CancelledAt == null && i.ExpiresAt > DateTime.UtcNow));
+
+            return Result.Success(new InvoiceStatisticsDto
             {
-                TotalInvoices = allInvoices.Count,
-                PaidInvoices = allInvoices.Count(invoice => invoice.PaidAt != null),
-                UnpaidInvoices = allInvoices.Count(invoice => invoice.PaidAt == null),
-            };
-
-            return Result.Success(statistics);
+                TotalInvoices = totalCount,
+                PaidInvoices = paidCount,
+                UnpaidInvoices = unpaidCount
+            });
         }
     }
 }
-

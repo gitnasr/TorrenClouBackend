@@ -27,7 +27,7 @@ namespace TorreClou.Core.Interfaces
         /// Last heartbeat timestamp from the worker processing this job.
         /// Used to detect stale/orphaned jobs.
         /// </summary>
-        DateTime? LastHeartbeat { get; }
+        DateTime? LastHeartbeat { get; set; }
 
         /// <summary>
         /// When the job started processing.

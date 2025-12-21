@@ -35,6 +35,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\TorreClou.Application\TorreClou.Application.csproj" />
+    <ProjectReference Include="..\TorreClou.GoogleDrive.Worker\TorreClou.GoogleDrive.Worker.csproj" />
     <ProjectReference Include="..\TorreClou.Infrastructure\TorreClou.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

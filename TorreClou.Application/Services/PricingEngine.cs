@@ -1,71 +1,76 @@
+using Microsoft.Extensions.Options;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Models.Pricing;
 
 namespace TorreClou.Application.Services
 {
-
-    public class PricingEngine : IPricingEngine
+    public class PricingEngine() : IPricingEngine
     {
         private const decimal BASE_RATE_PER_GB = 0.05m;
+
         private const decimal MINIMUM_CHARGE = 0.20m;
+
 
         public PricingSnapshot CalculatePrice(long sizeBytes, RegionCode region, double healthMultiplier, bool isCached = false)
         {
+            // 1. Convert Bytes to GB (Using Decimal for precision)
+            // We set a logical minimum of 0.1 GB to prevent micro-transactions for 1KB files
+            decimal sizeInGb = (decimal)sizeBytes / (1024m * 1024m * 1024m);
+            if (sizeInGb < 0.1m) sizeInGb = 0.1m;
+
+            // 2. Get Modifiers
+            decimal regionMultiplier = GetRegionMultiplier(region);
+            decimal healthFactor = (decimal)healthMultiplier; // Cast double input to decimal immediately
+
+            // 3. Base Calculation
+            // Formula: (GB * Rate * Region) * Health
+            decimal basePrice = sizeInGb * BASE_RATE_PER_GB * regionMultiplier;
+            decimal priceWithHealth = basePrice * healthFactor;
+
+            // 4. Create Snapshot (Populate before final adjustments for transparency)
             var snapshot = new PricingSnapshot
             {
                 BaseRatePerGb = BASE_RATE_PER_GB,
                 UserRegion = region.ToString(),
+                RegionMultiplier = (double)regionMultiplier, // Store as double for display/JSON
                 HealthMultiplier = healthMultiplier,
-                IsCacheHit = isCached
+                IsCacheHit = isCached,
+                TotalSizeInBytes = sizeBytes,
+                CalculatedSizeInGb = (double)Math.Round(sizeInGb, 4)
             };
 
-            // 1. حساب الحجم بالجيجا
-            double sizeInGb = sizeBytes / (1024.0 * 1024.0 * 1024.0);
-            if (sizeInGb < 0.1) sizeInGb = 0.1;
-
-            // 2. معامل المنطقة (Region Multiplier)
-            snapshot.RegionMultiplier = GetRegionMultiplier(region);
-
-           
-
-            // --- المعادلة الأساسية ---
-            // Price = (Size * Rate * Region) * Health
-            decimal rawPrice = (decimal)sizeInGb * BASE_RATE_PER_GB * (decimal)snapshot.RegionMultiplier;
-
-            // تطبيق معامل الصحة
-            rawPrice *= (decimal)snapshot.HealthMultiplier;
-
-            // 4. خصم الكاش (Cache Hit)
+            // 5. Apply Cache Discount
             if (isCached)
             {
-                // لو موجود، خصم 50% (أو يدفع تكلفة الـ Upload فقط)
-                decimal discount = rawPrice * 0.50m;
-                snapshot.CacheDiscountAmount = discount;
-                rawPrice -= discount;
+                // If cached, they only pay for the "Storage/Bandwidth" slot, not the "Compute" of downloading
+                //decimal discount = priceWithHealth * _settings.CacheDiscountPercentage;
+                //snapshot.CacheDiscountAmount = Math.Round(discount, 4);
+                //priceWithHealth -= discount;
             }
 
-            // التأكد من الحد الأدنى
-            snapshot.FinalPrice = Math.Max(rawPrice, MINIMUM_CHARGE);
+            // 6. Enforce Minimum Charge (Floor)
+            // This covers transaction fees (Stripe/PayPal usually charge fixed $0.30 + %)
+            snapshot.FinalPrice = Math.Max(priceWithHealth, MINIMUM_CHARGE);
 
-            // تقريب لأقرب رقمين عشريين
-            snapshot.FinalPrice = Math.Round(snapshot.FinalPrice, 2);
+            // 7. Final Rounding (Bankers Rounding)
+            snapshot.FinalPrice = Math.Round(snapshot.FinalPrice, 2, MidpointRounding.AwayFromZero);
 
             return snapshot;
         }
 
-        private double GetRegionMultiplier(RegionCode region)
+        private decimal GetRegionMultiplier(RegionCode region)
         {
+            // Purchasing Power Parity (PPP) Logic
             return region switch
             {
-                RegionCode.EG => 0.4, // مصر خصم 60%
-                RegionCode.IN => 0.4, // الهند
-                RegionCode.SA => 0.8, // السعودية
-                RegionCode.US or RegionCode.EU => 1.0, // أمريكا وأوروبا سعر كامل
-                _ => 1.0
+                RegionCode.EG => 0.4m, // Egypt (60% Off)
+                RegionCode.IN => 0.4m, // India (60% Off)
+                RegionCode.SA => 0.8m, // Saudi Arabia (20% Off)
+                RegionCode.US => 1.0m, // USA (Base)
+                RegionCode.EU => 1.0m, // Europe (Base)
+                _ => 1.0m
             };
         }
-
-      
     }
 }

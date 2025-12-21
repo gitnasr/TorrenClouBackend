@@ -31,7 +31,6 @@
         SYNCING, 
         PENDING_UPLOAD, 
         UPLOADING, 
-        RETRYING, // Deprecated/fallback - prefer specific retry states
         TORRENT_DOWNLOAD_RETRY, 
         UPLOAD_RETRY, 
         SYNC_RETRY, 
@@ -43,7 +42,7 @@
         GOOGLE_DRIVE_FAILED 
     }
 
-    public enum JobType { Torrent, Other }
+    public enum JobType { Torrent,  Sync}
 
     public enum ViolationType
     {

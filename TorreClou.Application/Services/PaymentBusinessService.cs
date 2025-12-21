@@ -13,20 +13,14 @@ namespace TorreClou.Application.Services
 {
     public class PaymentBusinessService(
         IUnitOfWork unitOfWork,
-        IPaymentGateway paymentGateway, IWalletService walletService) : IPaymentBusinessService
+        IPaymentGateway paymentGateway,
+        IWalletService walletService) : IPaymentBusinessService
     {
         public async Task<Result<string>> InitiateDepositAsync(int userId, decimal amount, string currency)
         {
             var user = await unitOfWork.Repository<User>().GetByIdAsync(userId);
-            if (user == null)
-            {
-                return Result<string>.Failure("User not found.");
-            }
-
-            if (amount <= 0)
-            {
-                return Result<string>.Failure("Amount must be greater than zero.");
-            }
+            if (user == null) return Result<string>.Failure("User not found.");
+            if (amount <= 0) return Result<string>.Failure("Amount must be greater than zero.");
 
             var deposit = new Deposit
             {
@@ -34,17 +28,20 @@ namespace TorreClou.Application.Services
                 Amount = amount,
                 Currency = currency,
                 Status = DepositStatus.Pending,
-                PaymentProvider = "Coinremitter"
+                PaymentProvider = "Coinremitter",
+                CreatedAt = DateTime.UtcNow // Ensure created date is set
             };
+
             unitOfWork.Repository<Deposit>().Add(deposit);
-            await unitOfWork.Complete();
+            await unitOfWork.Complete(); // Save first to get ID
 
-
+            // Initiate with Gateway
             var depositData = await paymentGateway.InitiatePaymentAsync(deposit, user);
 
-         
+            // Update with Gateway Info
             deposit.GatewayTransactionId = depositData.InvoiceId;
             deposit.PaymentUrl = depositData.PaymentUrl;
+
             unitOfWork.Repository<Deposit>().Update(deposit);
             await unitOfWork.Complete();
 
@@ -53,43 +50,75 @@ namespace TorreClou.Application.Services
 
         public async Task<Result> ProcessCryptoWebhookAsync(string invoiceId, string coin)
         {
+            // 1. Find Deposit
             Deposit? deposit = null;
-
             var spec = new BaseSpecification<Deposit>(d => d.GatewayTransactionId == invoiceId);
             deposit = await unitOfWork.Repository<Deposit>().GetEntityWithSpec(spec);
 
+            // Fallback: try ID parse if gateway ID failed
             if (deposit == null && int.TryParse(invoiceId, out var depositId))
             {
                 deposit = await unitOfWork.Repository<Deposit>().GetByIdAsync(depositId);
             }
 
-            if (deposit == null) return Result.Failure("Deposit not found");
-            if (deposit.Status == DepositStatus.Completed) return Result.Success();
+            if (deposit == null) return Result.Failure($"Deposit not found for Invoice: {invoiceId}");
 
-            var gatewayInvoiceId = deposit.GatewayTransactionId;
-            var invoiceData = await paymentGateway.VerifyInvoiceAsync(gatewayInvoiceId!, coin);
+            // 2. Idempotency Check (Fast)
+            if (deposit.Status == DepositStatus.Completed)
+            {
+                return Result.Success(); // Already processed
+            }
+
+            // 3. Verify with Gateway (Security)
+            var gatewayInvoiceId = deposit.GatewayTransactionId ?? invoiceId;
+            var invoiceData = await paymentGateway.VerifyInvoiceAsync(gatewayInvoiceId, coin);
 
             if (invoiceData == null) return Result.Failure("Could not verify payment with provider");
 
+            // 4. Handle Status
+            // Coinremitter status: 1 (Paid), 3 (Over paid)
             if (invoiceData.status_code == 1 || invoiceData.status_code == 3)
             {
-                deposit.Status = DepositStatus.Completed;
+                // CRITICAL SECURITY CHECK: Has this specific invoice already been credited to the wallet?
+                // This prevents "Double Spend" if the server crashes between Wallet Credit and Deposit Update.
+                var txSpec = new BaseSpecification<WalletTransaction>(t => t.ReferenceId == invoiceData.invoice_id && t.Type == TransactionType.DEPOSIT);
+                var existingTx = await unitOfWork.Repository<WalletTransaction>().GetEntityWithSpec(txSpec);
 
-                var walletResult = await walletService.AddDepositAsync(
-                    deposit.UserId,
-                    deposit.Amount,
-                    referenceId: invoiceData.invoice_id ?? deposit.Id.ToString(),
-                    description: $"Crypto Deposit ({coin})"
-                );
-
-                if (walletResult.IsSuccess)
+                if (existingTx != null)
                 {
-                    deposit.WalletTransactionId = walletResult.Value;
+                    // Wallet was already credited, but Deposit status wasn't updated. Fix it now.
+                    deposit.Status = DepositStatus.Completed;
+                    deposit.WalletTransactionId = existingTx.Id;
+                }
+                else
+                {
+                    // Credit Wallet
+                    var walletResult = await walletService.AddDepositAsync(
+                        deposit.UserId,
+                        deposit.Amount,
+                        referenceId: invoiceData.invoice_id ?? deposit.Id.ToString(),
+                        description: $"Crypto Deposit ({coin})"
+                    );
+
+                    if (walletResult.IsSuccess)
+                    {
+                        deposit.Status = DepositStatus.Completed;
+                        deposit.WalletTransactionId = walletResult.Value;
+                    }
+                    else
+                    {
+                        return Result.Failure($"Wallet credit failed: {walletResult.Error.Message}");
+                    }
                 }
             }
+            // Coinremitter status: 4 (Pending), 5 (Expired/Cancelled)
             else if (invoiceData.status_code == 4 || invoiceData.status_code == 5)
             {
-                deposit.Status = DepositStatus.Failed;
+                // Only fail if it was pending
+                if (deposit.Status == DepositStatus.Pending)
+                {
+                    deposit.Status = DepositStatus.Failed;
+                }
             }
 
             unitOfWork.Repository<Deposit>().Update(deposit);
@@ -132,10 +161,7 @@ namespace TorreClou.Application.Services
             var spec = new BaseSpecification<Deposit>(x => x.Id == depositId && x.UserId == userId);
             var deposit = await unitOfWork.Repository<Deposit>().GetEntityWithSpec(spec);
 
-            if (deposit == null)
-            {
-                return Result<DepositDto>.Failure("NOT_FOUND", "Deposit not found.");
-            }
+            if (deposit == null) return Result<DepositDto>.Failure("NOT_FOUND", "Deposit not found.");
 
             return Result.Success(new DepositDto
             {
@@ -153,17 +179,12 @@ namespace TorreClou.Application.Services
         public async Task<Result<PaginatedResult<AdminDepositDto>>> AdminGetAllDepositsAsync(int pageNumber, int pageSize, DepositStatus? status = null)
         {
             var spec = new AdminDepositsSpecification(pageNumber, pageSize, status);
-            
-            int totalCount;
-            if (status.HasValue)
-            {
-                totalCount = await unitOfWork.Repository<Deposit>().CountAsync(x => x.Status == status.Value);
-            }
-            else
-            {
-                totalCount = await unitOfWork.Repository<Deposit>().CountAsync(x => true);
-            }
 
+            var countSpec = status.HasValue
+                ? new BaseSpecification<Deposit>(x => x.Status == status.Value)
+                : new BaseSpecification<Deposit>(x => true);
+
+            var totalCount = await unitOfWork.Repository<Deposit>().CountAsync(countSpec);
             var deposits = await unitOfWork.Repository<Deposit>().ListAsync(spec);
 
             var items = deposits.Select(d => new AdminDepositDto
@@ -195,11 +216,12 @@ namespace TorreClou.Application.Services
             var from = dateFrom ?? DateTime.UtcNow.AddMonths(-1);
             var to = dateTo ?? DateTime.UtcNow;
 
-            // Get all deposits in range
+            // 1. Optimized Deposit Fetching (Filtered by Date in SQL)
             var depositSpec = new BaseSpecification<Deposit>(d => d.CreatedAt >= from && d.CreatedAt <= to);
-            var deposits = await unitOfWork.Repository<Deposit>().ListAsync(depositSpec);
+            var deposits = await unitOfWork.Repository<Deposit>().ListAsync(depositSpec); // Loads only this month's deposits
 
-            // Get all wallet transactions for total balance
+            // 2. Wallet Stats (Optimization)
+            // NOTE: Ideally, replace this with a direct SQL query or specific repository method
             var allTransactions = await unitOfWork.Repository<WalletTransaction>().ListAllAsync();
 
             var dashboard = new AdminDashboardDto
@@ -209,8 +231,12 @@ namespace TorreClou.Application.Services
                 PendingDepositsCount = deposits.Count(d => d.Status == DepositStatus.Pending),
                 CompletedDepositsCount = deposits.Count(d => d.Status == DepositStatus.Completed),
                 FailedDepositsCount = deposits.Count(d => d.Status == DepositStatus.Failed),
+
+                // Aggregates
                 TotalWalletBalance = allTransactions.Sum(t => t.Amount),
                 TotalUsersWithBalance = allTransactions.GroupBy(t => t.UserId).Count(g => g.Sum(t => t.Amount) > 0),
+
+                // Charts
                 DailyDeposits = GetDailyData(deposits, from, to),
                 WeeklyDeposits = GetWeeklyData(deposits, from, to),
                 MonthlyDeposits = GetMonthlyData(deposits, from, to)
@@ -234,7 +260,6 @@ namespace TorreClou.Application.Services
                     Count = dayDeposits.Count
                 });
             }
-
             return result;
         }
 
@@ -248,7 +273,7 @@ namespace TorreClou.Application.Services
             {
                 var endOfWeek = startOfWeek.AddDays(7);
                 var weekDeposits = completedDeposits.Where(d => d.CreatedAt >= startOfWeek && d.CreatedAt < endOfWeek).ToList();
-                
+
                 result.Add(new ChartDataPoint
                 {
                     Label = $"{startOfWeek:MMM dd} - {endOfWeek.AddDays(-1):MMM dd}",
@@ -258,7 +283,6 @@ namespace TorreClou.Application.Services
 
                 startOfWeek = endOfWeek;
             }
-
             return result;
         }
 
@@ -272,7 +296,7 @@ namespace TorreClou.Application.Services
             {
                 var nextMonth = current.AddMonths(1);
                 var monthDeposits = completedDeposits.Where(d => d.CreatedAt >= current && d.CreatedAt < nextMonth).ToList();
-                
+
                 result.Add(new ChartDataPoint
                 {
                     Label = current.ToString("MMM yyyy"),
@@ -282,7 +306,6 @@ namespace TorreClou.Application.Services
 
                 current = nextMonth;
             }
-
             return result;
         }
     }

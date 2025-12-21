@@ -9,13 +9,13 @@ using TorreClou.Core.Interfaces;
 using TorreClou.Core.Options;
 using TorreClou.Core.Shared;
 
-namespace TorreClou.Infrastructure.Services
+namespace TorreClou.Infrastructure.Services.Drive
 {
     public  class GoogleDriveJobService(
         IOptions<GoogleDriveSettings> settings,
         IHttpClientFactory httpClientFactory,
         ILogger<GoogleDriveJobService> logger,
-        IUploadProgressContext progressContext) : IGoogleDriveJob
+        IUploadProgressContext progressContext) : IGoogleDriveJobService
     {
         private readonly GoogleDriveSettings _settings = settings.Value;
 

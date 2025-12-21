@@ -10,7 +10,7 @@ namespace TorreClou.Application.Services.Torrent
     public class UdpTrackerScraper : ITrackerScraper
     {
         private const long PROTOCOL_ID = 0x41727101980;
-        private readonly TimeSpan _timeout = TimeSpan.FromSeconds(1.5);
+        private readonly TimeSpan _timeout = TimeSpan.FromSeconds(5);
 
         public async Task<ScrapeAggregationResult> GetScrapeResultsAsync(string infoHash, IEnumerable<string> trackers)
         {

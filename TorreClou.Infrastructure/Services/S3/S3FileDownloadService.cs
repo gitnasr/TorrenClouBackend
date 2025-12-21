@@ -6,7 +6,7 @@ using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
 using TorreClou.Infrastructure.Settings;
 
-namespace TorreClou.Infrastructure.Services
+namespace TorreClou.Infrastructure.Services.S3
 {
     public interface IS3FileDownloadService
     {

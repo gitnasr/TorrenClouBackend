@@ -1,21 +1,16 @@
-using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 namespace TorreClou.Infrastructure.Extensions
 {
-    /// <summary>
-    /// Extension methods for configuring OpenTelemetry observability.
-    /// </summary>
     public static class OpenTelemetryExtensions
     {
-        /// <summary>
-        /// Configures OpenTelemetry for applications (API and Workers).
-        /// </summary>
         public static IServiceCollection AddTorreClouOpenTelemetry(
             this IServiceCollection services,
             string serviceName,
@@ -26,76 +21,84 @@ namespace TorreClou.Infrastructure.Extensions
             var observabilityConfig = configuration.GetSection("Observability");
             var enablePrometheus = observabilityConfig.GetValue<bool>("EnablePrometheus", includeAspNetCoreInstrumentation);
             var enableTracing = observabilityConfig.GetValue<bool>("EnableTracing", true);
-            var otlpEndpoint = observabilityConfig["OtlpEndpoint"];
-            var otlpHeaders = observabilityConfig["OtlpHeaders"]; // Add this
+            var enableLogging = observabilityConfig.GetValue<bool>("EnableLogging", true);
 
-            services.AddOpenTelemetry()
-                .ConfigureResource(resource => resource
-                    .AddService(serviceName)
-                    .AddAttributes(new Dictionary<string, object>
-                    {
-                        ["deployment.environment"] = environment.EnvironmentName
-                    }))
+            var otlpEndpoint = observabilityConfig["OtlpEndpoint"];
+            var otlpHeaders = observabilityConfig["OtlpHeaders"];
+
+            // 1. Define Resource ONCE (Shared by Traces, Metrics, Logs)
+            var resourceBuilder = ResourceBuilder.CreateDefault()
+                .AddService(serviceName)
+                .AddAttributes(new Dictionary<string, object>
+                {
+                    ["deployment.environment"] = environment.EnvironmentName,
+                    ["service.instance.id"] = Environment.MachineName
+                });
+
+            // 2. Configure OpenTelemetry Pipeline
+            var otelBuilder = services.AddOpenTelemetry()
                 .WithMetrics(metrics =>
                 {
+                    metrics.SetResourceBuilder(resourceBuilder)
+                           .AddHttpClientInstrumentation()
+                           .AddRuntimeInstrumentation()
+                           .AddProcessInstrumentation();
+
                     if (includeAspNetCoreInstrumentation)
-                    {
                         metrics.AddAspNetCoreInstrumentation();
-                    }
-                    metrics
-                        .AddHttpClientInstrumentation()
-                        .AddRuntimeInstrumentation()
-                        .AddProcessInstrumentation();
 
                     if (enablePrometheus)
-                    {
                         metrics.AddPrometheusExporter();
-                    }
 
                     if (!string.IsNullOrEmpty(otlpEndpoint))
                     {
-                        metrics.AddOtlpExporter(options =>
+                        metrics.AddOtlpExporter(opts =>
                         {
-                            options.Endpoint = new Uri(otlpEndpoint);
-                            // Add headers if provided
-                            if (!string.IsNullOrEmpty(otlpHeaders))
-                            {
-                                options.Headers = otlpHeaders;
-                            }
+                            opts.Endpoint = new Uri(otlpEndpoint);
+                            if (!string.IsNullOrEmpty(otlpHeaders)) opts.Headers = otlpHeaders;
                         });
                     }
                 });
 
             if (enableTracing)
             {
-                services.AddOpenTelemetry()
-                    .WithTracing(tracing =>
-                    {
-                        if (includeAspNetCoreInstrumentation)
-                        {
-                            tracing.AddAspNetCoreInstrumentation();
-                        }
-                        tracing
-                            .AddHttpClientInstrumentation()
-                            .AddEntityFrameworkCoreInstrumentation(options =>
-                            {
-                                options.SetDbStatementForText = true;
-                            })
-                            .AddRedisInstrumentation();
+                otelBuilder.WithTracing(tracing =>
+                {
+                    tracing.SetResourceBuilder(resourceBuilder)
+                           .AddHttpClientInstrumentation()
+                           .AddEntityFrameworkCoreInstrumentation(o => o.SetDbStatementForText = true)
+                           .AddRedisInstrumentation();
 
-                        if (!string.IsNullOrEmpty(otlpEndpoint))
+                    if (includeAspNetCoreInstrumentation)
+                        tracing.AddAspNetCoreInstrumentation();
+
+                    if (!string.IsNullOrEmpty(otlpEndpoint))
+                    {
+                        tracing.AddOtlpExporter(opts =>
                         {
-                            tracing.AddOtlpExporter(options =>
-                            {
-                                options.Endpoint = new Uri(otlpEndpoint);
-                                // Add headers if provided
-                                if (!string.IsNullOrEmpty(otlpHeaders))
-                                {
-                                    options.Headers = otlpHeaders;
-                                }
-                            });
-                        }
+                            opts.Endpoint = new Uri(otlpEndpoint);
+                            if (!string.IsNullOrEmpty(otlpHeaders)) opts.Headers = otlpHeaders;
+                        });
+                    }
+                });
+            }
+
+            // 3. Configure Logging (Optional but recommended)
+            if (enableLogging && !string.IsNullOrEmpty(otlpEndpoint))
+            {
+                services.AddLogging(logging =>
+                {
+                    logging.AddOpenTelemetry(options =>
+                    {
+                        options.SetResourceBuilder(resourceBuilder);
+                        options.IncludeScopes = true;
+                        options.AddOtlpExporter(opts =>
+                        {
+                            opts.Endpoint = new Uri(otlpEndpoint);
+                            if (!string.IsNullOrEmpty(otlpHeaders)) opts.Headers = otlpHeaders;
+                        });
                     });
+                });
             }
 
             return services;

@@ -2,7 +2,7 @@ using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
 using TorreClou.Core.Interfaces;
 
-namespace TorreClou.Infrastructure.Services
+namespace TorreClou.Infrastructure.Services.Redis
 {
     /// <summary>
     /// Internal implementation of IRedisLock with automatic refresh mechanism.
