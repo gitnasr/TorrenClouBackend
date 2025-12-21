@@ -104,6 +104,25 @@ namespace TorreClou.Application.Services.Torrent
                     $"User with ID {torrent.UploadedByUserId} does not exist. Cannot create RequestedFile.");
             }
 
+            // Validate required fields
+            if (string.IsNullOrWhiteSpace(torrent.InfoHash))
+            {
+                return Result<RequestedFile>.Failure("INVALID_INFOHASH", 
+                    "InfoHash is required and cannot be empty. Cannot create or find RequestedFile.");
+            }
+
+            if (string.IsNullOrWhiteSpace(torrent.FileName))
+            {
+                return Result<RequestedFile>.Failure("INVALID_FILENAME", 
+                    "FileName is required and cannot be empty. Cannot create RequestedFile.");
+            }
+
+            if (torrent.FileSize <= 0)
+            {
+                return Result<RequestedFile>.Failure("INVALID_FILESIZE", 
+                    "FileSize must be greater than zero. Cannot create RequestedFile.");
+            }
+
             // Check if this specific user has already uploaded this torrent
             var searchCriteria = new BaseSpecification<RequestedFile>(t =>
                 t.InfoHash == torrent.InfoHash &&
@@ -136,11 +155,13 @@ namespace TorreClou.Application.Services.Torrent
             if (fileStream != null)
             {
                 var uploadResult = await UploadTorrentBlobAsync(fileStream, torrent.InfoHash);
-                if (uploadResult.IsSuccess)
+                if (!uploadResult.IsSuccess)
                 {
-                    torrent.DirectUrl = uploadResult.Value;
+                    return Result<RequestedFile>.Failure("UPLOAD_FAILED", 
+                        $"Failed to upload torrent file to blob storage: {uploadResult.Error?.Message ?? "Unknown error"}. Cannot create RequestedFile.");
                 }
-               
+                
+                torrent.DirectUrl = uploadResult.Value;
             }
 
             unitOfWork.Repository<RequestedFile>().Add(torrent);
