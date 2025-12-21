@@ -7,7 +7,7 @@ using TorreClou.Core.Specifications;
 
 namespace TorreClou.Application.Services.Storage
 {
-    public class StorageProfilesService(IUnitOfWork unitOfWork) : IStorageProfilesService
+    public class StorageProfilesService(IUnitOfWork unitOfWork, IJobService jobService) : IStorageProfilesService
     {
         public async Task<Result<UserStorageProfile>> ValidateActiveStorageProfileByUserId(int userId, int profileId)
         {
@@ -120,8 +120,17 @@ namespace TorreClou.Application.Services.Storage
                 return Result.Failure("ALREADY_DISCONNECTED", "Storage profile is already disconnected");
             }
 
-            // Set profile as inactive
-            profile.IsActive = false;
+
+            // Check if there are any active jobs using this profile
+            var activeJobs = await jobService.GetActiveJobsByStorageProfileIdAsync(profile.Id);
+            if (activeJobs.Value.Any())
+            {
+                return Result.Failure("PROFILE_IN_USE", "Cannot disconnect profile while there are active jobs using it");
+            }
+
+
+                // Set profile as inactive
+                profile.IsActive = false;
             
             // If this was the default profile, unset it
             if (profile.IsDefault)

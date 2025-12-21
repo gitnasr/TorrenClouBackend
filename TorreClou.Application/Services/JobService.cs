@@ -18,7 +18,7 @@ namespace TorreClou.Application.Services
 
         public async Task<Result<JobCreationResult>> CreateAndDispatchJobAsync(int invoiceId, int userId)
         {
-            // 1. Load Invoice
+            // 1. Load Invoice: Move it to invoice service and inject it 
             var invoiceSpec = new BaseSpecification<Invoice>(i => i.Id == invoiceId && i.UserId == userId);
             invoiceSpec.AddInclude(i => i.TorrentFile);
             var invoice = await unitOfWork.Repository<Invoice>().GetEntityWithSpec(invoiceSpec);
@@ -28,7 +28,7 @@ namespace TorreClou.Application.Services
             if (invoice.JobId != null) return Result<JobCreationResult>.Failure("JOB_ALREADY_EXISTS", "A job has already been created for this invoice.");
 
 
-            // 1.5. Check for existing active jobs (REFACTORED)
+            // 1.5. Check for existing active jobs : Move it to Spec
 
             var existingJobSpec = new BaseSpecification<UserJob>(j =>
                 j.UserId == userId &&
@@ -208,6 +208,18 @@ namespace TorreClou.Application.Services
             {
                 return [];
             }
+        }
+
+        public async Task<Result<IReadOnlyList<UserJob>>> GetActiveJobsByStorageProfileIdAsync(int storageProfileId)
+        {
+         
+            var spec = new BaseSpecification<UserJob>(j =>
+                j.StorageProfileId == storageProfileId &&
+                j.Status.IsActive()
+            );
+            var activeJobs = await  unitOfWork.Repository<UserJob>().ListAsync(spec);
+            return Result.Success(activeJobs);
+
         }
     }
 }

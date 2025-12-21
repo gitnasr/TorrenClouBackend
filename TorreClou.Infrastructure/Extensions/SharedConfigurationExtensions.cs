@@ -37,6 +37,7 @@ namespace TorreClou.Infrastructure.Extensions
                 .MinimumLevel.Override("Microsoft.AspNetCore.Routing", isDevelopment ? LogEventLevel.Information : LogEventLevel.Warning)
                 .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
                 .MinimumLevel.Override("System", LogEventLevel.Warning)
+                .MinimumLevel.Override("System.Net.Http.HttpClient", LogEventLevel.Warning)
                 .Enrich.FromLogContext()
                 .Enrich.WithMachineName()
                 .Enrich.WithThreadId()

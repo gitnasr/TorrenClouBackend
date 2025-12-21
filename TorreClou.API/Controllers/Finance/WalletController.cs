@@ -3,30 +3,34 @@ using Microsoft.AspNetCore.Mvc;
 using TorreClou.Application.Services;
 using TorreClou.Core.DTOs.Financal;
 using TorreClou.Core.Interfaces;
+using TorreClou.Core.Shared;
 
 namespace TorreClou.API.Controllers.Finance
 {
-    [Route("api/wallet")]
+    [Route("api/finance/wallet")]
     [ApiController]
     public class WalletController(IWalletService walletService) : BaseApiController
     {
         #region Wallet
 
-        [HttpGet("wallet/balance")]
+        [HttpGet("balance")]
         public async Task<IActionResult> GetBalance()
         {
             var result = await walletService.GetUserBalanceAsync(UserId);
-            return HandleResult(result, balance => new WalletBalanceDto { Balance = balance, Currency = "USD" });
+            var mappedResult = result.IsSuccess
+                ? Result.Success(new WalletBalanceDto { Balance = result.Value, Currency = "USD" })
+                : Result.Failure<WalletBalanceDto>(result.Error);
+            return HandleResult(mappedResult, 200);
         }
 
-        [HttpGet("wallet/transactions")]
+        [HttpGet("transactions")]
         public async Task<IActionResult> GetTransactions([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 10)
         {
             var result = await walletService.GetUserTransactionsAsync(UserId, pageNumber, pageSize);
             return HandleResult(result);
         }
 
-        [HttpGet("wallet/transactions/{id}")]
+        [HttpGet("transactions/{id}")]
         public async Task<IActionResult> GetTransaction(int id)
         {
             var result = await walletService.GetTransactionByIdAsync(UserId, id);

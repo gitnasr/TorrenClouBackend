@@ -154,7 +154,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
 
                 if (!string.IsNullOrEmpty(completedId))
                 {
-                    Logger.LogInformation("{LogPrefix} Skipping {File} (Already in Redis)", LogPrefix, file.Name);
+                    Logger.LogDebug("{LogPrefix} Skipping {File} (Already in Redis)", LogPrefix, file.Name);
                     await progressContext.MarkFileCompletedAsync(file.Name, file.Length);
                 }
                 else
@@ -293,8 +293,6 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 var relDir = Path.GetRelativePath(job.DownloadPath!, file.DirectoryName!);
                 var relPath = Path.GetRelativePath(job.DownloadPath!, file.FullName);
                 var folderId = folderMap.TryGetValue(relDir, out var fid) ? fid : folderMap["."];
-
-                Logger.LogInformation("{LogPrefix} Uploading {File}", LogPrefix, file.Name);
 
                 // Check Drive First (Fallback if Redis was flushed)
                 var exists = await googleDriveService.CheckFileExistsAsync(folderId, file.Name, accessToken, token);

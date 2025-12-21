@@ -9,7 +9,7 @@ namespace TorreClou.Infrastructure.Services.Drive
     public class UploadProgressContext(IRedisCacheService redisCache) : IUploadProgressContext
     {
         // Throttling constants
-        private static readonly TimeSpan LogInterval = TimeSpan.FromSeconds(30);
+        private const long LogThresholdBytes = 100 * 1024 * 1024; // 100 MB like torrent
         private const double DbUpdateThresholdPercent = 5.0;
         private static readonly TimeSpan ResumeUriTtl = TimeSpan.FromDays(7);
         private static readonly TimeSpan CompletedFileTtl = TimeSpan.FromDays(30);
@@ -18,6 +18,7 @@ namespace TorreClou.Infrastructure.Services.Drive
         // State
         private double _lastDbPercent;
         private DateTime _lastLogTime = DateTime.MinValue;
+        private long _lastLoggedBytes = 0;
         private long _completedBytes;
 
         // Config
@@ -40,10 +41,8 @@ namespace TorreClou.Infrastructure.Services.Drive
             // Reset state
             _lastDbPercent = 0;
             _lastLogTime = DateTime.MinValue;
+            _lastLoggedBytes = 0;
             _completedBytes = 0;
-
-            _logger.LogInformation("[UPLOAD_CTX] Configured | JobId: {JobId} | Total: {TotalMB:F2} MB",
-                jobId, totalBytes / 1048576.0);
         }
 
         public async Task ReportProgressAsync(string fileName, long bytesUploaded, long fileSize)
@@ -91,15 +90,24 @@ namespace TorreClou.Infrastructure.Services.Drive
                 _lastDbPercent = overallPercent;
             }
 
-            // 2. Logging Logic (Throttled)
-            if ((now - _lastLogTime) >= LogInterval || isFileComplete)
+            // 2. Logging Logic (Byte-based threshold like torrent, or on file complete)
+            if (currentBytes - _lastLoggedBytes >= LogThresholdBytes || isFileComplete || _lastLogTime == DateTime.MinValue)
             {
-                var fileTag = isFileComplete ? "[FILE_DONE]" : "[UPLOADING]";
-                _logger?.LogInformation(
-                    "{Tag} JobId: {JobId} | {Percent:F1}% | File: {File} | {Uploaded}/{Total} MB",
-                    fileTag, _jobId, overallPercent, currentFile,
-                    currentBytes >> 20, _totalBytes >> 20); // Bitshift >> 20 is fast / 1024*1024
+                double speed = 0;
+                if (_lastLogTime != DateTime.MinValue && (now - _lastLogTime).TotalSeconds > 0)
+                {
+                    speed = (currentBytes - _lastLoggedBytes) / (now - _lastLogTime).TotalSeconds;
+                }
 
+                _logger?.LogInformation(
+                    "Progress | JobId: {JobId} | {Percent:F2}% | {UploadedMB:F2}/{TotalMB:F2} MB | Speed: {SpeedMBps:F2} MB/s",
+                    _jobId,
+                    overallPercent,
+                    currentBytes / (1024.0 * 1024.0),
+                    _totalBytes / (1024.0 * 1024.0),
+                    speed / (1024.0 * 1024.0));
+
+                _lastLoggedBytes = currentBytes;
                 _lastLogTime = now;
             }
         }
