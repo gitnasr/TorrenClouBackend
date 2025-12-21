@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MonoTorrent;
+using MonoTorrent.BEncoding;
 using MonoTorrent.Client;
 using System.Diagnostics;
 using System.Threading.RateLimiting;
@@ -109,9 +110,9 @@ namespace TorreClou.Worker.Services
                 Logger.LogInformation(
                     "{LogPrefix} Torrent loaded | JobId: {JobId} | Name: {Name} | Size: {SizeMB:F2} MB | Path: {Path} | MaxConnections: {MaxConn}",
                     LogPrefix, job.Id, torrent.Name, downloadableSize / (1024.0 * 1024.0), downloadPath, manager.Settings.MaximumConnections);
-
+             
                 // Start manager to load FastResume state
-                 await manager.StartAsync();
+                   await manager.StartAsync();
                     
                     
                     // Check if torrent is already complete

@@ -87,10 +87,13 @@ namespace TorreClou.API.Extensions
 
             services.AddHangfire((provider, hfConfig) =>
             {
-                hfConfig.SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-                        .UseSimpleAssemblyNameTypeSerializer()
+                hfConfig  .UseSimpleAssemblyNameTypeSerializer()
                         .UseRecommendedSerializerSettings()
-                        .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(connString));
+                        .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(connString), new()
+                        {
+                            InvisibilityTimeout = TimeSpan.FromHours(24),
+                            QueuePollInterval = TimeSpan.FromSeconds(1)
+                        });
 
                 // Allow passing extra filters (like JobStateSyncFilter)
                 extraConfig?.Invoke(hfConfig);
@@ -105,8 +108,8 @@ namespace TorreClou.API.Extensions
             services.AddHangfireServer(options =>
             {
                 options.WorkerCount = Environment.ProcessorCount * 5;
-                options.ServerTimeout = TimeSpan.FromSeconds(45);
-                options.HeartbeatInterval = TimeSpan.FromSeconds(15);
+                options.ServerTimeout = TimeSpan.FromMinutes(5);
+                options.HeartbeatInterval = TimeSpan.FromSeconds(30);
                 options.SchedulePollingInterval = TimeSpan.FromSeconds(10);
                 options.Queues = queues;
             });
