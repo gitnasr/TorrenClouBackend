@@ -12,7 +12,7 @@ namespace TorreClou.Core.Models.Pricing
         public double HealthMultiplier { get; set; }
         public bool IsCacheHit { get; set; }
 
-        public List<int> SelectedFiles { get; set; } = new();
+        public List<string> SelectedFilePaths { get; set; } = new();
 
         public string? VoucherCode { get; set; }
 

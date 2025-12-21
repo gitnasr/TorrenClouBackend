@@ -10,6 +10,7 @@ using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
 using TorreClou.Core.Options;
+using TorreClou.Core.DTOs.Storage.Google_Drive;
 
 namespace TorreClou.Application.Services
 {
@@ -363,7 +364,7 @@ namespace TorreClou.Application.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync();
-                    logger.LogWarning(
+                    logger.LogCritical(
                         "Failed to fetch user info: {StatusCode} - {Error}. Access token length: {TokenLength}", 
                         response.StatusCode, 
                         errorContent,
@@ -417,40 +418,6 @@ namespace TorreClou.Application.Services
             return Result.Success();
         }
 
-        private class OAuthState
-        {
-            public int UserId { get; set; }
-            public string Nonce { get; set; } = string.Empty;
-            public string? ProfileName { get; set; }
-            public DateTime ExpiresAt { get; set; }
-        }
-
-        private class TokenResponse
-        {
-            [System.Text.Json.Serialization.JsonPropertyName("access_token")]
-            public string AccessToken { get; set; } = string.Empty;
-
-            [System.Text.Json.Serialization.JsonPropertyName("refresh_token")]
-            public string? RefreshToken { get; set; }
-
-            [System.Text.Json.Serialization.JsonPropertyName("expires_in")]
-            public int ExpiresIn { get; set; }
-
-            [System.Text.Json.Serialization.JsonPropertyName("token_type")]
-            public string? TokenType { get; set; }
-        }
-
-        private class UserInfoResponse
-        {
-            [System.Text.Json.Serialization.JsonPropertyName("email")]
-            public string? Email { get; set; }
-
-            [System.Text.Json.Serialization.JsonPropertyName("verified_email")]
-            public bool VerifiedEmail { get; set; }
-
-            [System.Text.Json.Serialization.JsonPropertyName("name")]
-            public string? Name { get; set; }
-        }
     }
 }
 

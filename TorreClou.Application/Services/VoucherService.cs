@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using TorreClou.Core.Entities.Marketing;
+﻿using TorreClou.Core.Entities.Marketing;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;

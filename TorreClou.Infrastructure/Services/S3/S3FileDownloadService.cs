@@ -2,7 +2,6 @@ using Amazon.S3;
 using Amazon.S3.Model;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
 using TorreClou.Infrastructure.Settings;
 

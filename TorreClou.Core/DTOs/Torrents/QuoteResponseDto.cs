@@ -1,5 +1,4 @@
 using TorreClou.Core.DTOs.Torrents;
-using TorreClou.Core.Interfaces;
 using TorreClou.Core.Models.Pricing;
 
 public record QuoteResponseDto
@@ -10,7 +9,7 @@ public record QuoteResponseDto
     public decimal FinalAmountInUSD { get; init; }
     public decimal FinalAmountInNCurrency { get; init; }
 
-    public TorrentHealthMeasurements TorrentHealth { get; init; }
+    public TorrentHealthMeasurements TorrentHealth { get; init; } = null!;
 
     public string FileName { get; init; } = string.Empty;
 

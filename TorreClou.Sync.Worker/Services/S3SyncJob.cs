@@ -1,7 +1,5 @@
-using Hangfire;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System.Buffers; 
+using System.Buffers;
 using System.Text.Json;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
@@ -54,7 +52,7 @@ namespace TorreClou.Sync.Worker.Services
                 {
                     Logger.LogError("{LogPrefix} UserJob not found | SyncId: {SyncId} | JobId: {JobId}",
                         LogPrefix, syncId, sync.JobId);
-                    sync.Status = SyncStatus.Failed;
+                    sync.Status = SyncStatus.FAILED;
                     sync.ErrorMessage = "UserJob not found";
                     await UnitOfWork.Complete();
                     return;
@@ -80,7 +78,7 @@ namespace TorreClou.Sync.Worker.Services
 
             try
             {
-                if (sync.Status != SyncStatus.Pending && sync.Status != SyncStatus.Retrying)
+                if (sync.Status != SyncStatus.NotStarted && sync.Status != SyncStatus.SYNC_RETRY)
                 {
                     Logger.LogWarning("{LogPrefix} Sync invalid state | SyncId: {SyncId} | Status: {Status}",
                         LogPrefix, sync.Id, sync.Status);
@@ -96,7 +94,7 @@ namespace TorreClou.Sync.Worker.Services
                 Logger.LogInformation("{LogPrefix} Starting | SyncId: {SyncId} | Bucket: {Bucket}",
                     LogPrefix, sync.Id, _backblazeSettings.BucketName);
 
-                sync.Status = SyncStatus.InProgress;
+                sync.Status = SyncStatus.SYNCING;
                 sync.StartedAt = DateTime.UtcNow;
                 await UnitOfWork.Complete();
 
@@ -157,7 +155,7 @@ namespace TorreClou.Sync.Worker.Services
                     }
                 }
 
-                sync.Status = SyncStatus.Completed;
+                sync.Status = SyncStatus.COMPLETED;
                 sync.CompletedAt = DateTime.UtcNow;
                 sync.BytesSynced = overallBytesUploaded;
                 sync.FilesSynced = filesSynced;
@@ -172,7 +170,7 @@ namespace TorreClou.Sync.Worker.Services
             catch (Exception ex)
             {
                 Logger.LogError(ex, "{LogPrefix} Fatal error during sync", LogPrefix);
-                sync.Status = SyncStatus.Failed;
+                sync.Status = SyncStatus.FAILED;
                 sync.ErrorMessage = ex.Message;
                 await UnitOfWork.Complete();
                 throw;
@@ -196,7 +194,7 @@ namespace TorreClou.Sync.Worker.Services
                 List<PartETag>? existingParts = null;
 
                 // 3. Resume Logic
-                if (progress != null && progress.Status == SyncProgressStatus.InProgress && !string.IsNullOrEmpty(progress.UploadId))
+                if (progress != null && progress.Status == SyncStatus.SYNCING && !string.IsNullOrEmpty(progress.UploadId))
                 {
                     uploadId = progress.UploadId;
                     existingParts = ParsePartETags(progress.PartETags);
@@ -234,7 +232,7 @@ namespace TorreClou.Sync.Worker.Services
                         UploadId = uploadId,
                         PartSize = PartSize,
                         TotalParts = totalParts,
-                        Status = SyncProgressStatus.InProgress,
+                        Status = SyncStatus.SYNCING,
                         StartedAt = DateTime.UtcNow,
                         TotalBytes = file.Length
                     };
@@ -298,7 +296,7 @@ namespace TorreClou.Sync.Worker.Services
                 var comp = await s3UploadService.CompleteUploadAsync(_backblazeSettings.BucketName, s3Key, uploadId, existingParts, cancellationToken);
                 if (comp.IsFailure) return Result.Failure(comp.Error.Code, comp.Error.Message);
 
-                progress.Status = SyncProgressStatus.Completed;
+                progress.Status = SyncStatus.COMPLETED;
                 progress.CompletedAt = DateTime.UtcNow;
                 UnitOfWork.Repository<S3SyncProgress>().Delete(progress); // Clean up tracking row
                 await UnitOfWork.Complete();
@@ -366,7 +364,7 @@ namespace TorreClou.Sync.Worker.Services
 
         private async Task MarkSyncFailedAsync(SyncEntity sync, string msg, bool hasRetries)
         {
-            sync.Status = hasRetries ? SyncStatus.Retrying : SyncStatus.Failed;
+            sync.Status = hasRetries ? SyncStatus.SYNC_RETRY : SyncStatus.FAILED;
             sync.ErrorMessage = msg;
             if (hasRetries)
             {

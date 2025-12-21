@@ -1,8 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 using TorreClou.Core.DTOs.Financal;
-using TorreClou.Core.DTOs.Torrents;
 using TorreClou.Core.Interfaces;
 
 namespace TorreClou.API.Controllers

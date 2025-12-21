@@ -2,7 +2,7 @@
 using TorreClou.Core.Entities;
 using TorreClou.Core.Interfaces;
 
-namespace MySaaS.Infrastructure.Data
+namespace TorreClou.Infrastructure.Data
 {
     public sealed class SpecificationEvaluator<TEntity> where TEntity : BaseEntity
     {

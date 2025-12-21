@@ -5,7 +5,6 @@ using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Interfaces.Hangfire;
 using TorreClou.Infrastructure.Workers;
-using TorreClou.Worker.Services;
 
 namespace TorreClou.Worker
 {

@@ -1,17 +1,12 @@
 ﻿using Hangfire;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MonoTorrent;
-using MonoTorrent.BEncoding;
 using MonoTorrent.Client;
-using System.Diagnostics;
-using System.Threading.RateLimiting;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Interfaces.Hangfire;
 using TorreClou.Core.Specifications;
-using TorreClou.Infrastructure.Services;
 using TorreClou.Infrastructure.Settings;
 using TorreClou.Infrastructure.Workers;
 
@@ -77,9 +72,8 @@ namespace TorreClou.Worker.Services
                     return;
                 }
                 var downloadableSize = torrent.Files
-                    .Select((file, index) => new { file.Length, index })
-                    .Where(x => job.SelectedFileIndices.Contains(x.index))
-                    .Sum(x => x.Length);
+                    .Where(file => job.SelectedFilePaths.Contains(file.Path))
+                    .Sum(file => file.Length);
                 job.Status = JobStatus.DOWNLOADING;
                 job.StartedAt ??= DateTime.UtcNow;
                 job.LastHeartbeat = DateTime.UtcNow;
@@ -92,18 +86,27 @@ namespace TorreClou.Worker.Services
                 _engine = CreateEngine(downloadPath);
                 manager = await _engine.AddAsync(torrent, downloadPath);
                 var progress = manager.Progress;
-                var selectedSet = new HashSet<int>(job.SelectedFileIndices);
-                for (int i = 0; i < manager.Files.Count; i++)
+                var selectedSet = new HashSet<string>(job.SelectedFilePaths);
+                foreach (var file in manager.Files)
                 {
-                    var file = manager.Files[i];
-                    if (selectedSet.Contains(i))
+                    // Check if the file's path exists in your selected list
+                    if (selectedSet.Contains(file.Path))
                     {
                         await manager.SetFilePriorityAsync(file, Priority.Normal);
-
+                        Logger.LogInformation(
+                            "{LogPrefix} Selected file for download | JobId: {JobId} | FilePath: {FilePath} | SizeMB: {SizeMB:F2} MB",
+                            LogPrefix, job.Id, file.Path, file.Length / (1024.0 * 1024.0));
                     }
                     else
                     {
-                        await manager.SetFilePriorityAsync(file, Priority.DoNotDownload);
+
+                        // Set to DoNotDownload for unselected files
+
+                      await  manager.SetFilePriorityAsync(file, Priority.DoNotDownload);
+                        Logger.LogInformation(
+                            "{LogPrefix} Skipped file from download as per user request | JobId: {JobId} | FilePath: {FilePath} | SizeMB: {SizeMB:F2} MB",
+                            LogPrefix, job.Id, file.Path, file.Length / (1024.0 * 1024.0));
+
                     }
                 }
 
@@ -396,7 +399,6 @@ namespace TorreClou.Worker.Services
                 job.Status = JobStatus.PENDING_UPLOAD;
                 job.CurrentState = "Download complete. Starting  upload...";
                 job.BytesDownloaded = job.TotalBytes;
-                job.HangfireJobId = null; // Clear Hangfire job ID for next step
                 await UnitOfWork.Complete();
 
                 Logger.LogInformation("{LogPrefix} Publishing to upload stream | JobId: {JobId} | Provider: {Provider}", 

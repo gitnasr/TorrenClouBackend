@@ -7,7 +7,6 @@ using TorreClou.Infrastructure.Settings;
 using TorreClou.Core.Options;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Interfaces;
-using TorreClou.API.Extensions;
 using TorreClou.Core.Interfaces.Hangfire;
 using TorreClou.Infrastructure.Services.Drive;
 using Microsoft.Extensions.Hosting;

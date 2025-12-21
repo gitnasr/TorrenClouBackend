@@ -1,6 +1,5 @@
 ﻿using TorreClou.Core.DTOs.Auth;
 using TorreClou.Core.Entities;
-using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Specifications;
@@ -28,19 +27,12 @@ namespace TorreClou.Application.Services
                     Email = googlePayload.Email,
                     FullName = googlePayload.Name,
                     OAuthProvider = "Google",
-                    OAuthSubjectId = googlePayload.Subject, // Google Unique ID
-                    IsPhoneNumberVerified = googlePayload.EmailVerified, // مبدئيا نعتبره Verified لو جوجل قال كده
+                    OAuthSubjectId = googlePayload.Subject, 
+                    IsPhoneNumberVerified = googlePayload.EmailVerified, 
                     Role = UserRole.User
                 };
 
-                user.StorageProfiles.Add(new UserStorageProfile
-                {
-                    ProfileName = "My Google Drive",
-                    ProviderType = StorageProviderType.GoogleDrive,
-                    CredentialsJson = "{}", // لسه فاضي لحد ما ناخد صلاحية الـ Drive
-                    IsDefault = true,
-                    IsActive = true
-                });
+            
 
                 unitOfWork.Repository<User>().Add(user);
                 await unitOfWork.Complete(); // Save to generate ID

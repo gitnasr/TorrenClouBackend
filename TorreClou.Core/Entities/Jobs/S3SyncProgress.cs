@@ -1,5 +1,4 @@
 using TorreClou.Core.Enums;
-using TorreClou.Core.Entities;
 
 namespace TorreClou.Core.Entities.Jobs
 {
@@ -18,7 +17,7 @@ namespace TorreClou.Core.Entities.Jobs
         public long BytesUploaded { get; set; }
         public long TotalBytes { get; set; }
         public string PartETags { get; set; } = "[]"; // JSON array of {PartNumber, ETag}
-        public SyncProgressStatus Status { get; set; }
+        public SyncStatus Status { get; set; }
         public int? LastPartNumber { get; set; }
         public DateTime? StartedAt { get; set; }
         public DateTime? CompletedAt { get; set; }

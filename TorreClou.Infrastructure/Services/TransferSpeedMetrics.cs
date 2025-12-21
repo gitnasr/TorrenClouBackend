@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
 using TorreClou.Core.Interfaces;

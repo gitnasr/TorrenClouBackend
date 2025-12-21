@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace TorreClou.Core.Entities.Torrents
+﻿namespace TorreClou.Core.Entities.Torrents
 {
     public class RequestedFile : BaseEntity
     {

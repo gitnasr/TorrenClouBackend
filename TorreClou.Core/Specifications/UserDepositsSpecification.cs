@@ -1,7 +1,6 @@
 using TorreClou.Core.Entities.Financals;
-using TorreClou.Core.Specifications;
 
-namespace TorreClou.Application.Services
+namespace TorreClou.Core.Specifications
 {
     // Specification classes for deposit queries
     public class UserDepositsSpecification : BaseSpecification<Deposit>

@@ -18,7 +18,7 @@ namespace TorreClou.Application.Services
 
         public async Task<Result<JobCreationResult>> CreateAndDispatchJobAsync(int invoiceId, int userId)
         {
-            // 1. Load Invoice
+            // 1. Load Invoice: Move it to invoice service and inject it 
             var invoiceSpec = new BaseSpecification<Invoice>(i => i.Id == invoiceId && i.UserId == userId);
             invoiceSpec.AddInclude(i => i.TorrentFile);
             var invoice = await unitOfWork.Repository<Invoice>().GetEntityWithSpec(invoiceSpec);
@@ -28,7 +28,7 @@ namespace TorreClou.Application.Services
             if (invoice.JobId != null) return Result<JobCreationResult>.Failure("JOB_ALREADY_EXISTS", "A job has already been created for this invoice.");
 
 
-            // 1.5. Check for existing active jobs (REFACTORED)
+            // 1.5. Check for existing active jobs : Move it to Spec
 
             var existingJobSpec = new BaseSpecification<UserJob>(j =>
                 j.UserId == userId &&
@@ -67,7 +67,7 @@ namespace TorreClou.Application.Services
                 Status = JobStatus.QUEUED,
                 Type = JobType.Torrent,
                 RequestFileId = invoice.TorrentFileId,
-                SelectedFileIndices = ExtractSelectedFilesFromSnapshot(invoice.PricingSnapshotJson)
+                SelectedFilePaths = ExtractSelectedFilesFromSnapshot(invoice.PricingSnapshotJson)
             };
 
             unitOfWork.Repository<UserJob>().Add(job);
@@ -93,23 +93,12 @@ namespace TorreClou.Application.Services
                 StorageProfileId = defaultStorageProfile?.Id,
             });
         }
-        public async Task<Result<PaginatedResult<JobDto>>> GetUserJobsAsync(int userId, int pageNumber, int pageSize, JobStatus? status = null, UserRole? userRole = null)
+        public async Task<Result<PaginatedResult<JobDto>>> GetUserJobsAsync(int userId, int pageNumber, int pageSize, JobStatus? status = null)
         {
-            var spec = new UserJobsSpecification(userId, pageNumber, pageSize, status, userRole);
-            // Count spec should use the same filtering logic
+            var spec = new UserJobsSpecification(userId, pageNumber, pageSize, status);
             var countSpec = new BaseSpecification<UserJob>(job => 
-                job.UserId == userId && 
-                (status == null || job.Status == status) &&
-                // Filter logic: 
-                // - Sync type jobs are internal - only visible to Admin/Support
-                // - SYNCING and SYNC_RETRY statuses are for Sync jobs - regular users should never see them
-                // - Regular users only see Torrent type jobs with statuses other than SYNCING/SYNC_RETRY
-                (userRole == null || 
-                 userRole == UserRole.Admin || 
-                 userRole == UserRole.Support ||
-                 (job.Type == JobType.Torrent && 
-                  job.Status != JobStatus.SYNCING && 
-                  job.Status != JobStatus.SYNC_RETRY))); // Regular users: Torrent jobs only, excluding SYNCING/SYNC_RETRY
+                job.UserId == userId && (status == null || job.Status == status)
+               ); 
 
             var jobs = await unitOfWork.Repository<UserJob>().ListAsync(spec);
             var totalCount = await unitOfWork.Repository<UserJob>().CountAsync(countSpec);
@@ -130,7 +119,7 @@ namespace TorreClou.Application.Services
                 LastHeartbeat = job.LastHeartbeat,
                 BytesDownloaded = job.BytesDownloaded,
                 TotalBytes = job.TotalBytes,
-                SelectedFileIndices = job.SelectedFileIndices,
+                SelectedFilePaths = job.SelectedFilePaths,
                 CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt
             }).ToList();
@@ -148,17 +137,7 @@ namespace TorreClou.Application.Services
         {
             var spec = new BaseSpecification<UserJob>(job => 
                 job.Id == jobId && 
-                job.UserId == userId &&
-                // Apply same filtering logic as list:
-                // - Sync type jobs are internal - only visible to Admin/Support
-                // - SYNCING and SYNC_RETRY statuses are for Sync jobs - regular users should never see them
-                // - Regular users only see Torrent type jobs with statuses other than SYNCING/SYNC_RETRY
-                (userRole == null || 
-                 userRole == UserRole.Admin || 
-                 userRole == UserRole.Support ||
-                 (job.Type == JobType.Torrent && 
-                  job.Status != JobStatus.SYNCING && 
-                  job.Status != JobStatus.SYNC_RETRY))); // Regular users: Torrent jobs only, excluding SYNCING/SYNC_RETRY
+                job.UserId == userId ); 
             spec.AddInclude(job => job.StorageProfile);
             spec.AddInclude(job => job.RequestFile);
 
@@ -185,7 +164,7 @@ namespace TorreClou.Application.Services
                 LastHeartbeat = job.LastHeartbeat,
                 BytesDownloaded = job.BytesDownloaded,
                 TotalBytes = job.TotalBytes,
-                SelectedFileIndices = job.SelectedFileIndices,
+                SelectedFilePaths = job.SelectedFilePaths,
                 CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt
             });
@@ -215,7 +194,7 @@ namespace TorreClou.Application.Services
             return Result.Success(statistics);
         }
 
-        private static int[] ExtractSelectedFilesFromSnapshot(string pricingSnapshotJson)
+        private static string[] ExtractSelectedFilesFromSnapshot(string pricingSnapshotJson)
         {
             if (string.IsNullOrEmpty(pricingSnapshotJson))
                 return [];
@@ -229,6 +208,13 @@ namespace TorreClou.Application.Services
             {
                 return [];
             }
+        }
+
+        public async Task<Result<IReadOnlyList<UserJob>>> GetActiveJobsByStorageProfileIdAsync(int storageProfileId)
+        {
+            var spec = new ActiveJobsByStorageProfileSpecification(storageProfileId);
+            var activeJobs = await unitOfWork.Repository<UserJob>().ListAsync(spec);
+            return Result.Success(activeJobs);
         }
     }
 }

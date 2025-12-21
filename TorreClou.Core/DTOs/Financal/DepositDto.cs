@@ -1,5 +1,3 @@
-using TorreClou.Core.Enums;
-
 namespace TorreClou.Core.DTOs.Financal
 {
     public class DepositDto

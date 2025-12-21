@@ -1,6 +1,5 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
-using MySaaS.Infrastructure.Data;
 using TorreClou.Core.Entities;
 using TorreClou.Core.Interfaces;
 using TorreClou.Infrastructure.Data;

@@ -3,7 +3,6 @@ using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Infrastructure.Workers;
-using TorreClou.GoogleDrive.Worker.Services; 
 using Hangfire;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
@@ -43,7 +42,7 @@ namespace TorreClou.GoogleDrive.Worker
             }
 
             // CRITICAL: Prevent duplicate uploads if worker restarts before ACK
-            if (!string.IsNullOrEmpty(job.HangfireJobId))
+            if (!string.IsNullOrEmpty(job.HangfireUploadJobId))
             {
                 Logger.LogInformation("[GD_WORKER] Job {Id} already enqueued (HF: {HfId}). Skipping.",
                     jobId, job.HangfireJobId);

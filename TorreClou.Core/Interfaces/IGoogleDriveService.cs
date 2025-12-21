@@ -1,4 +1,4 @@
-﻿namespace TorreClou.Application.Services.Google_Drive
+﻿namespace TorreClou.Core.Interfaces
 {
     public interface IGoogleDriveService
     {

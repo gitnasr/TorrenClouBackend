@@ -1,12 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Web;
-using Microsoft.Extensions.Configuration;
+﻿using System.Web;
 using TorreClou.Core.Interfaces;
-using TorreClou.Core.Options;
 
 namespace TorreClou.Application.Services.Google_Drive
 {

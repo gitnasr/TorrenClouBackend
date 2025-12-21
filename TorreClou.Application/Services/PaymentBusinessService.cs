@@ -1,7 +1,6 @@
 using TorreClou.Core.DTOs.Admin;
 using TorreClou.Core.DTOs.Common;
 using TorreClou.Core.DTOs.Financal;
-using TorreClou.Core.DTOs.Payments;
 using TorreClou.Core.Entities;
 using TorreClou.Core.Entities.Financals;
 using TorreClou.Core.Enums;

@@ -1,6 +1,5 @@
 using Hangfire;
 using Serilog;
-using TorreClou.API.Extensions;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Interfaces.Hangfire;

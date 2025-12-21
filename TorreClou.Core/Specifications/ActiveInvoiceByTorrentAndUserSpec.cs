@@ -1,5 +1,4 @@
-﻿using TorreClou.Core.Entities.Financals;
-using TorreClou.Core.Enums;
+﻿using TorreClou.Core.Enums;
 
 namespace TorreClou.Core.Specifications
 {

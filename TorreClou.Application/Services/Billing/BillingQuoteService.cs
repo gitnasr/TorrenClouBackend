@@ -1,8 +1,5 @@
 ﻿using System.Text.Json;
-using System.Threading.Tasks;
 using TorreClou.Core.DTOs.Financal;
-using TorreClou.Core.Entities;
-using TorreClou.Core.Entities.Financals;
 using TorreClou.Core.Entities.Marketing;
 using TorreClou.Core.Entities.Torrents;
 using TorreClou.Core.Enums;
@@ -11,7 +8,7 @@ using TorreClou.Core.Models.Pricing;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
 
-namespace TorreClou.Application.Services
+namespace TorreClou.Application.Services.Billing
 {
     public class QuotePricingService(
         IWalletService walletService,
@@ -31,7 +28,7 @@ namespace TorreClou.Application.Services
             );
 
             snapshot.TotalSizeInBytes = request.SizeInBytes;
-            snapshot.SelectedFiles = request.SelectedFiles ?? new List<int>();
+            snapshot.SelectedFiles = request.SelectedFilePaths;
             snapshot.UserRegion = request.Region.ToString();
 
             // 2) Check for PENDING invoice first - prevent duplicates
@@ -232,8 +229,8 @@ namespace TorreClou.Application.Services
             if (oldSnap.IsCacheHit != newSnap.IsCacheHit) return false;
             if (!string.Equals(oldSnap.UserRegion, newSnap.UserRegion, StringComparison.Ordinal)) return false;
 
-            var oldFiles = oldSnap.SelectedFiles ?? new List<int>();
-            var newFiles = newSnap.SelectedFiles ?? new List<int>();
+            var oldFiles = oldSnap.SelectedFiles ;
+            var newFiles = newSnap.SelectedFiles;
             if (oldFiles.Count != newFiles.Count) return false;
 
             if (!oldFiles.OrderBy(x => x).SequenceEqual(newFiles.OrderBy(x => x))) return false;

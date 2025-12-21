@@ -185,7 +185,6 @@ namespace TorreClou.Infrastructure.Services.Drive
                     if (statusResult.IsSuccess)
                     {
                         startByte = statusResult.Value;
-                        logger.LogInformation("Resuming upload from byte {StartByte} | File: {FileName}", startByte, fileName);
                     }
                     else
                     {
@@ -271,7 +270,6 @@ namespace TorreClou.Infrastructure.Services.Drive
                 return Result<string>.Failure("INIT_FAILED", "No upload URI returned");
             }
 
-            logger.LogDebug("Initiated resumable upload | URI: {Uri}", uploadUri);
             return Result.Success(uploadUri);
         }
 
@@ -388,7 +386,6 @@ namespace TorreClou.Infrastructure.Services.Drive
                         await progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
                     }
 
-                    logger.LogInformation("Upload complete | File: {FileName} | DriveFileId: {FileId}", fileName, driveFile?.Id);
                     return Result.Success(driveFile?.Id ?? "");
                 }
 
@@ -405,7 +402,6 @@ namespace TorreClou.Infrastructure.Services.Drive
                     // If all bytes have been sent but we still got 308, finalize the upload
                     if (currentPosition >= fileSize)
                     {
-                        logger.LogInformation("All bytes sent, finalizing upload | File: {FileName}", fileName);
                         // Make a final PUT request with Content-Range query format to finalize and get file ID
                         var finalRequest = new HttpRequestMessage(HttpMethod.Put, resumeUri);
                         finalRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
@@ -426,7 +422,6 @@ namespace TorreClou.Infrastructure.Services.Drive
                                 await progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
                             }
 
-                            logger.LogInformation("Upload complete (finalized after 308) | File: {FileName} | DriveFileId: {FileId}", fileName, driveFile?.Id);
                             return Result.Success(driveFile?.Id ?? "");
                         }
                         else
@@ -447,7 +442,6 @@ namespace TorreClou.Infrastructure.Services.Drive
             // If we exit the loop and all bytes were sent, finalize the upload as fallback
             if (currentPosition >= fileSize)
             {
-                logger.LogInformation("Loop exited with all bytes sent, finalizing upload | File: {FileName}", fileName);
                 // Make a final PUT request with Content-Range query format to finalize and get file ID
                 var finalRequest = new HttpRequestMessage(HttpMethod.Put, resumeUri);
                 finalRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
@@ -468,7 +462,6 @@ namespace TorreClou.Infrastructure.Services.Drive
                         await progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
                     }
 
-                    logger.LogInformation("Upload complete (finalized after loop exit) | File: {FileName} | DriveFileId: {FileId}", fileName, driveFile?.Id);
                     return Result.Success(driveFile?.Id ?? "");
                 }
                 else
@@ -508,7 +501,7 @@ namespace TorreClou.Infrastructure.Services.Drive
                 if (fileListResponse?.Files != null && fileListResponse.Files.Length > 0)
                 {
                     var fileId = fileListResponse.Files[0].Id;
-                    logger.LogInformation("File exists in Google Drive | FileName: {FileName} | FolderId: {FolderId} | FileId: {FileId}",
+                    logger.LogDebug("File exists in Google Drive | FileName: {FileName} | FolderId: {FolderId} | FileId: {FileId}",
                         fileName, folderId, fileId);
                     return Result.Success<string?>(fileId);
                 }

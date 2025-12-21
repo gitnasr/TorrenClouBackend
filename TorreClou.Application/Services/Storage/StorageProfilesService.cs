@@ -1,30 +1,29 @@
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Configuration;
-using TorreClou.Core.DTOs.Storage;
+﻿using TorreClou.Core.DTOs.Storage;
+using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Interfaces;
-using TorreClou.Core.Options;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
-using TorreClou.Core.Entities.Jobs;
-using System.Web;
 
-namespace TorreClou.API.Controllers
+namespace TorreClou.Application.Services.Storage
 {
-    [Route("api/storage")]
-    [Authorize]
-    public class StorageProfilesController(
-        IUnitOfWork unitOfWork
-        ) : BaseApiController
+    public class StorageProfilesService(IUnitOfWork unitOfWork, IJobService jobService) : IStorageProfilesService
     {
-
-
-        [HttpGet("profiles")]
-        public async Task<IActionResult> GetStorageProfiles()
+        public async Task<Result<UserStorageProfile>> ValidateActiveStorageProfileByUserId(int userId, int profileId)
         {
             var spec = new BaseSpecification<UserStorageProfile>(
-                p => p.UserId == UserId && p.IsActive
+                p => p.Id == profileId && p.UserId == userId && p.IsActive
+            );
+            var profile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(spec);
+            if (profile == null)
+            {
+                return Result<UserStorageProfile>.Failure("PROFILE_NOT_FOUND", "Storage profile not found");
+            }
+            return Result.Success(profile);
+        }
+        public async Task<Result<List<StorageProfileDto>>> GetStorageProfilesAsync(int userId)
+        {
+            var spec = new BaseSpecification<UserStorageProfile>(
+                p => p.UserId == userId && p.IsActive
             );
 
             var profiles = await unitOfWork.Repository<UserStorageProfile>().ListAsync(spec);
@@ -43,20 +42,19 @@ namespace TorreClou.API.Controllers
                     CreatedAt = p.CreatedAt
                 }).ToList();
 
-            return Ok(dtos);
+            return Result.Success(dtos);
         }
 
-        [HttpGet("profiles/{id}")]
-        public async Task<IActionResult> GetStorageProfile(int id)
+        public async Task<Result<StorageProfileDetailDto>> GetStorageProfileAsync(int userId, int id)
         {
             var spec = new BaseSpecification<UserStorageProfile>(
-                p => p.Id == id && p.UserId == UserId && p.IsActive
+                p => p.Id == id && p.UserId == userId && p.IsActive
             );
             var profile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(spec);
 
             if (profile == null)
             {
-                return HandleResult(Result<StorageProfileDetailDto>.Failure("PROFILE_NOT_FOUND", "Storage profile not found"));
+                return Result<StorageProfileDetailDto>.Failure("PROFILE_NOT_FOUND", "Storage profile not found");
             }
 
             var dto = new StorageProfileDetailDto
@@ -71,25 +69,24 @@ namespace TorreClou.API.Controllers
                 UpdatedAt = profile.UpdatedAt
             };
 
-            return Ok(dto);
+            return Result.Success(dto);
         }
 
-        [HttpPost("profiles/{id}/set-default")]
-        public async Task<IActionResult> SetDefaultProfile(int id)
+        public async Task<Result> SetDefaultProfileAsync(int userId, int id)
         {
             var spec = new BaseSpecification<UserStorageProfile>(
-                p => p.Id == id && p.UserId == UserId && p.IsActive
+                p => p.Id == id && p.UserId == userId && p.IsActive
             );
             var profile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(spec);
 
             if (profile == null)
             {
-                return HandleResult(Result.Failure("PROFILE_NOT_FOUND", "Storage profile not found"));
+                return Result.Failure("PROFILE_NOT_FOUND", "Storage profile not found");
             }
 
             // Unset all other default profiles for this user
             var allProfilesSpec = new BaseSpecification<UserStorageProfile>(
-                p => p.UserId == UserId && p.IsActive
+                p => p.UserId == userId && p.IsActive
             );
             var allProfiles = await unitOfWork.Repository<UserStorageProfile>().ListAsync(allProfilesSpec);
 
@@ -102,29 +99,42 @@ namespace TorreClou.API.Controllers
             profile.IsDefault = true;
             await unitOfWork.Complete();
 
-            return HandleResult(Result.Success());
+            return Result.Success();
         }
 
-        [HttpPost("profiles/{id}/disconnect")]
-        public async Task<IActionResult> DisconnectProfile(int id)
+        public async Task<Result> DisconnectProfileAsync(int userId, int id)
         {
             var spec = new BaseSpecification<UserStorageProfile>(
-                p => p.Id == id && p.UserId == UserId
+                p => p.Id == id && p.UserId == userId
             );
             var profile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(spec);
 
             if (profile == null)
             {
-                return HandleResult(Result.Failure("PROFILE_NOT_FOUND", "Storage profile not found"));
+                return Result.Failure("PROFILE_NOT_FOUND", "Storage profile not found");
             }
 
             if (!profile.IsActive)
             {
-                return HandleResult(Result.Failure("ALREADY_DISCONNECTED", "Storage profile is already disconnected"));
+                return Result.Failure("ALREADY_DISCONNECTED", "Storage profile is already disconnected");
             }
 
-            // Set profile as inactive
-            profile.IsActive = false;
+
+            // Check if there are any active jobs using this profile
+            var activeJobs = await jobService.GetActiveJobsByStorageProfileIdAsync(profile.Id);
+            if (activeJobs.IsFailure)
+            {
+                return Result.Failure(activeJobs.Error.Code, activeJobs.Error.Message);
+            }
+
+            if (activeJobs.Value != null && activeJobs.Value.Any())
+            {
+                return Result.Failure("PROFILE_IN_USE", "Cannot disconnect profile while there are active jobs using it");
+            }
+
+
+                // Set profile as inactive
+                profile.IsActive = false;
             
             // If this was the default profile, unset it
             if (profile.IsDefault)
@@ -134,8 +144,7 @@ namespace TorreClou.API.Controllers
 
             await unitOfWork.Complete();
 
-            return HandleResult(Result.Success());
+            return Result.Success();
         }
     }
 }
-

@@ -1,5 +1,3 @@
-using TorreClou.Core.Entities.Financals;
-
 namespace TorreClou.Core.Specifications
 {
     public class PendingInvoiceByTorrentAndUserSpec : BaseSpecification<Invoice>

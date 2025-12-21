@@ -389,6 +389,9 @@ namespace TorreClou.Infrastructure.Migrations
                     b.Property<string>("HangfireJobId")
                         .HasColumnType("text");
 
+                    b.Property<string>("HangfireUploadJobId")
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("LastHeartbeat")
                         .HasColumnType("timestamp with time zone");
 
@@ -398,9 +401,9 @@ namespace TorreClou.Infrastructure.Migrations
                     b.Property<int>("RequestFileId")
                         .HasColumnType("integer");
 
-                    b.PrimitiveCollection<int[]>("SelectedFileIndices")
+                    b.PrimitiveCollection<string[]>("SelectedFilePaths")
                         .IsRequired()
-                        .HasColumnType("integer[]");
+                        .HasColumnType("text[]");
 
                     b.Property<DateTime?>("StartedAt")
                         .HasColumnType("timestamp with time zone");

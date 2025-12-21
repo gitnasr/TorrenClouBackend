@@ -5,7 +5,6 @@ using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Entities.Marketing;
 using TorreClou.Core.Entities.Torrents;
 using TorreClou.Core.Entities.Compliance;
-using TorreClou.Core.Enums;
 
 namespace TorreClou.Infrastructure.Data
 {
@@ -71,7 +70,7 @@ namespace TorreClou.Infrastructure.Data
             builder.Entity<UserJob>()
                 .Property(j => j.Type).HasConversion<string>();
             builder.Entity<UserJob>()
-                .Property(e => e.SelectedFileIndices).HasColumnType("integer[]"); // PostgreSQL Array
+                .Property(e => e.SelectedFilePaths).HasColumnType("text[]"); // PostgreSQL Array
 
             // --- Sync ---
             builder.Entity<Sync>()

@@ -1,6 +1,5 @@
 using Hangfire;
 using Serilog;
-using TorreClou.API.Extensions;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Interfaces.Hangfire;
@@ -10,7 +9,6 @@ using TorreClou.Infrastructure.Filters;
 using TorreClou.Infrastructure.Services;
 using TorreClou.Worker;
 using TorreClou.Worker.Services;
-using TorreClou.Worker.Services.Strategies;
 
 const string ServiceName = "torreclou-worker";
 

@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using TorreClou.API.Middleware;
 
 namespace TorreClou.API.Extensions

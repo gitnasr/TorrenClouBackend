@@ -12,9 +12,8 @@ using TorreClou.Infrastructure.Repositories;
 using TorreClou.Infrastructure.Interceptors;
 using TorreClou.Infrastructure.Services.Redis;
 using TorreClou.Core.Interfaces;
-using Serilog.Core;
 
-namespace TorreClou.API.Extensions
+namespace TorreClou.Infrastructure.Extensions
 {
     public static class SharedConfigurationExtensions
     {
@@ -37,6 +36,7 @@ namespace TorreClou.API.Extensions
                 .MinimumLevel.Override("Microsoft.AspNetCore.Routing", isDevelopment ? LogEventLevel.Information : LogEventLevel.Warning)
                 .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
                 .MinimumLevel.Override("System", LogEventLevel.Warning)
+                .MinimumLevel.Override("System.Net.Http.HttpClient", LogEventLevel.Warning)
                 .Enrich.FromLogContext()
                 .Enrich.WithMachineName()
                 .Enrich.WithThreadId()

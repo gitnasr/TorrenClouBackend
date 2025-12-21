@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Google.Apis.Auth;
+﻿using Google.Apis.Auth;
 using TorreClou.Core.Entities;
 
 namespace TorreClou.Core.Interfaces

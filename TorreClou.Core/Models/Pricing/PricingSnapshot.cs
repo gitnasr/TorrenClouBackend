@@ -6,7 +6,7 @@ namespace TorreClou.Core.Models.Pricing
         public double TotalSizeInGb => TotalSizeInBytes / 1_073_741_824.0;
 
 
-        public List<int> SelectedFiles { get; set; } = new();
+        public List<string> SelectedFiles { get; set; } = new();
 
         public decimal BaseRatePerGb { get; set; }
         public string UserRegion { get; set; } = string.Empty;

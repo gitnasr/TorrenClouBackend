@@ -2,7 +2,7 @@
 {
     public enum RegionCode { Global, US, EU, EG, SA, IN }
 
-    public enum UserRole { User, Admin, Support }
+    public enum UserRole { User, Admin, Support , Suspended, Banned}
 
     public enum StorageProviderType { GoogleDrive, OneDrive, AwsS3, Dropbox }
 
@@ -24,16 +24,22 @@
         Failed,    // الفيزا اترفضا
         Expired    // اللينك مدته انتهت
     }
+    public enum SyncStatus
+    {
+        SYNC_RETRY,
+        SYNCING,
+        FAILED,
+        COMPLETED,
+        NotStarted
+    }
     public enum JobStatus 
     { 
         QUEUED, 
         DOWNLOADING, 
-        SYNCING, 
         PENDING_UPLOAD, 
         UPLOADING, 
         TORRENT_DOWNLOAD_RETRY, 
         UPLOAD_RETRY, 
-        SYNC_RETRY, 
         COMPLETED, 
         FAILED, 
         CANCELLED, 
@@ -53,20 +59,4 @@
         Other
     }
 
-    public enum SyncProgressStatus
-    {
-        NotStarted,
-        InProgress,
-        Completed,
-        Failed
-    }
-
-    public enum SyncStatus
-    {
-        Pending,      // Created but not started
-        InProgress,   // Currently syncing
-        Completed,   // All files synced successfully
-        Failed,       // Sync failed
-        Retrying      // Retrying after failure
-    }
 }

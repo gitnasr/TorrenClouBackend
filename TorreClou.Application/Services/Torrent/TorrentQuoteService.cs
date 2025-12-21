@@ -1,8 +1,5 @@
 using TorreClou.Core.DTOs.Financal;
 using TorreClou.Core.DTOs.Torrents;
-using TorreClou.Core.Entities;
-using TorreClou.Core.Entities.Marketing;
-using TorreClou.Core.Entities.Torrents;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Models.Pricing;
 using TorreClou.Core.Shared;
@@ -14,10 +11,18 @@ namespace TorreClou.Application.Services.Torrent
         IUnitOfWork unitOfWork,
         ITorrentService torrentService,
         IQuotePricingService quotePricingService,
-        ITorrentHealthService torrentHealthService) : ITorrentQuoteService 
+        IStorageProfilesService storageProfilesService,
+        IUserService userService
+        ) : ITorrentQuoteService 
     {
         public async Task<Result<QuoteResponseDto>> GenerateQuoteAsync(QuoteRequestDto request, int userId, Stream torrentFile)
         {
+            //0. Check even if the user has active storage profile
+            var IsActiveStorageProfile = await storageProfilesService.ValidateActiveStorageProfileByUserId(userId, request.StorageProfileId);
+
+            if (!IsActiveStorageProfile.IsSuccess)
+                return Result<QuoteResponseDto>.Failure(IsActiveStorageProfile.Error);
+             
             // 1. Validate & Parse Torrent
             var torrentFileValidated = ValidateTorrentFile(torrentFile, request.TorrentFile.FileName);
             if (!torrentFileValidated.IsSuccess)
@@ -30,37 +35,27 @@ namespace TorreClou.Application.Services.Torrent
             var torrentInfo = torrentInfoResult.Value;
 
             // 2. Calculate Target Storage Size
-            var totalSizeResult = CalculateStorage(request.SelectedFileIndices, torrentInfo);
+            var totalSizeResult = CalculateStorage(request.SelectedFilePaths, torrentInfo);
             if (!totalSizeResult.IsSuccess)
                 return Result<QuoteResponseDto>.Failure(totalSizeResult.Error);
 
             long totalSizeInBytes = totalSizeResult.Value;
 
             // 3. Get User for Regional Pricing
-            var user = await unitOfWork.Repository<User>().GetByIdAsync(userId);
+            var user = await userService.GetActiveUserById(userId);
             if (user == null)
                 return Result<QuoteResponseDto>.Failure("USER_NOT_FOUND", "User not found.");
 
-            // 4. Calculate Health Metrics
-            // Higher health = Lower price multiplier. (Score 1.0 = 1x, Score 0.0 = 2x)
-            var health = torrentHealthService.Compute(torrentInfoResult.Value.ScrapeResult);
-            var healthMultiplier = 1 + (1 - health.HealthScore);
 
             // 5. Persist Torrent File (Optimized)
             // Ensure stream is ready for reading
             if (torrentFile.CanSeek) torrentFile.Position = 0;
 
-            var torrentInDbResult = await torrentService.FindOrCreateTorrentFile(new RequestedFile
-            {
-                InfoHash = torrentInfo.InfoHash,
-                FileName = torrentInfo.Name,
-                FileSize = torrentInfo.TotalSize,
-                Files = torrentInfo.Files.Select(f => f.Path).ToArray(),
-                UploadedByUserId = userId,
-                FileType = "Torrent"
-            }, torrentFile);
+      
 
-            if (torrentInDbResult.IsFailure)
+            var torrentStoredResult = await torrentService.FindOrCreateTorrentFile(torrentInfo,userId, torrentFile);
+
+            if (torrentStoredResult.IsFailure)
                 return Result<QuoteResponseDto>.Failure("Failed to save torrent information.");
 
             // 6. Generate or Reuse Invoice (Single Source of Truth for Pricing)
@@ -69,11 +64,11 @@ namespace TorreClou.Application.Services.Torrent
                 UserId = userId,
                 Region = user.Region,
                 SizeInBytes = totalSizeInBytes,
-                HealthMultiplier = healthMultiplier,
+                HealthMultiplier = torrentInfo.HealthMultiplier,
                 IsCacheHit = false, // You might want to check if this torrent exists in S3 here for true CacheHit logic
-                SelectedFiles = request.SelectedFileIndices?.ToList() ?? new List<int>(),
+                SelectedFilePaths = request.SelectedFilePaths,
                 VoucherCode = request.VoucherCode,
-                TorrentFile = torrentInDbResult.Value,
+                TorrentFile = torrentStoredResult.Value,
                 InfoHash = torrentInfo.InfoHash
             };
 
@@ -104,7 +99,7 @@ namespace TorreClou.Application.Services.Torrent
                 InfoHash = invoice.TorrentFile.InfoHash,
                 PricingDetails = snapshot,
                 InvoiceId = invoice.Id,
-                TorrentHealth = health
+                TorrentHealth = torrentInfo.Health
             });
         }
 
@@ -136,18 +131,18 @@ namespace TorreClou.Application.Services.Torrent
             return Result<Stream>.Success(torrentFile);
         }
 
-        private Result<long> CalculateStorage(List<int>? selectedFileIndices, TorrentInfoDto torrentInfo)
+        private Result<long> CalculateStorage(List<string> selectedFIlePathes, TorrentInfoDto torrentInfo)
         {
             if (torrentInfo.TotalSize == 0)
                 return Result.Failure<long>("Torrent total size is zero.");
 
-            if (selectedFileIndices == null || !selectedFileIndices.Any())
+            if (selectedFIlePathes == null )
             {
                 return Result.Success(torrentInfo.TotalSize);
             }
 
             long targetSize = torrentInfo.Files
-                .Where(f => selectedFileIndices.Contains(f.Index))
+                .Where(f => selectedFIlePathes.Contains(f.Path))
                 .Sum(f => f.Size);
 
             if (targetSize == 0)

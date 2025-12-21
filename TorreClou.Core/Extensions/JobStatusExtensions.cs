@@ -8,19 +8,16 @@ namespace TorreClou.Core.Extensions
         {
             return status == JobStatus.QUEUED ||
                    status == JobStatus.DOWNLOADING ||
-                   status == JobStatus.SYNCING ||
                    status == JobStatus.PENDING_UPLOAD ||
                    status == JobStatus.UPLOADING ||
                    status == JobStatus.TORRENT_DOWNLOAD_RETRY ||
-                   status == JobStatus.UPLOAD_RETRY ||
-                   status == JobStatus.SYNC_RETRY;
+                   status == JobStatus.UPLOAD_RETRY;
         }
 
         public static bool IsRetrying(this JobStatus status)
         {
-            return    status == JobStatus.TORRENT_DOWNLOAD_RETRY ||
-                   status == JobStatus.UPLOAD_RETRY ||
-                   status == JobStatus.SYNC_RETRY;
+            return status == JobStatus.TORRENT_DOWNLOAD_RETRY ||
+                   status == JobStatus.UPLOAD_RETRY;
         }
 
         public static bool IsFailed(this JobStatus status)

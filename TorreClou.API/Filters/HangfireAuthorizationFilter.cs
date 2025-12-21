@@ -1,5 +1,4 @@
 using Hangfire.Dashboard;
-using System.Security.Claims;
 
 namespace TorreClou.API.Filters
 {

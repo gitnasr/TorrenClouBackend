@@ -1,7 +1,6 @@
 using TorreClou.Core.Entities.Financals;
-using TorreClou.Core.Specifications;
 
-namespace TorreClou.Application.Services
+namespace TorreClou.Core.Specifications
 {
     public class AllTransactionsSpecification : BaseSpecification<WalletTransaction>
     {

@@ -1,13 +1,10 @@
-using Hangfire;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using TorreClou.Application.Services.Google_Drive;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Interfaces.Hangfire;
 using TorreClou.Core.Specifications;
-using TorreClou.Infrastructure.Services;
 using TorreClou.Infrastructure.Settings;
 using TorreClou.Infrastructure.Workers;
 using SyncEntity = TorreClou.Core.Entities.Jobs.Sync;
@@ -154,7 +151,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
 
                 if (!string.IsNullOrEmpty(completedId))
                 {
-                    Logger.LogInformation("{LogPrefix} Skipping {File} (Already in Redis)", LogPrefix, file.Name);
+                    Logger.LogDebug("{LogPrefix} Skipping {File} (Already in Redis)", LogPrefix, file.Name);
                     await progressContext.MarkFileCompletedAsync(file.Name, file.Length);
                 }
                 else
@@ -294,8 +291,6 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 var relPath = Path.GetRelativePath(job.DownloadPath!, file.FullName);
                 var folderId = folderMap.TryGetValue(relDir, out var fid) ? fid : folderMap["."];
 
-                Logger.LogInformation("{LogPrefix} Uploading {File}", LogPrefix, file.Name);
-
                 // Check Drive First (Fallback if Redis was flushed)
                 var exists = await googleDriveService.CheckFileExistsAsync(folderId, file.Name, accessToken, token);
                 if (exists.IsSuccess && !string.IsNullOrEmpty(exists.Value))
@@ -338,7 +333,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 var sync = new SyncEntity
                 {
                     JobId = job.Id,
-                    Status = SyncStatus.Pending,
+                    Status = SyncStatus.NotStarted,
                     LocalFilePath = job.DownloadPath,
                     S3KeyPrefix = $"torrents/{job.Id}",
                     TotalBytes = totalBytes,

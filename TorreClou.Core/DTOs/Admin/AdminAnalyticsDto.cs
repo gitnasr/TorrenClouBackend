@@ -1,5 +1,3 @@
-using TorreClou.Core.Enums;
-
 namespace TorreClou.Core.DTOs.Admin
 {
     public class AdminDashboardDto

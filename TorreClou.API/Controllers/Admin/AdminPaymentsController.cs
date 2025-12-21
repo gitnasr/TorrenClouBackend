@@ -4,7 +4,7 @@ using TorreClou.Core.DTOs.Admin;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 
-namespace TorreClou.API.Controllers;
+namespace TorreClou.API.Controllers.Admin;
 
 [Route("api/admin/payments")]
 [Authorize(Roles = "Admin")]
