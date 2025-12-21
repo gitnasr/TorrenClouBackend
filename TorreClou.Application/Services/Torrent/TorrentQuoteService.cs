@@ -1,6 +1,5 @@
 using TorreClou.Core.DTOs.Financal;
 using TorreClou.Core.DTOs.Torrents;
-using TorreClou.Core.Entities;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Models.Pricing;
 using TorreClou.Core.Shared;
