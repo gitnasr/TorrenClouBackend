@@ -119,7 +119,7 @@ namespace TorreClou.Application.Services
                 LastHeartbeat = job.LastHeartbeat,
                 BytesDownloaded = job.BytesDownloaded,
                 TotalBytes = job.TotalBytes,
-                SelectedFilesPath = job.SelectedFilePaths,
+                SelectedFilePaths = job.SelectedFilePaths,
                 CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt
             }).ToList();
@@ -164,7 +164,7 @@ namespace TorreClou.Application.Services
                 LastHeartbeat = job.LastHeartbeat,
                 BytesDownloaded = job.BytesDownloaded,
                 TotalBytes = job.TotalBytes,
-                SelectedFilesPath = job.SelectedFilePaths,
+                SelectedFilePaths = job.SelectedFilePaths,
                 CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt
             });

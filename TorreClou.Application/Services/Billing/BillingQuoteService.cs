@@ -28,7 +28,7 @@ namespace TorreClou.Application.Services.Billing
             );
 
             snapshot.TotalSizeInBytes = request.SizeInBytes;
-            snapshot.SelectedFiles = request.SelectedFilesPath ;
+            snapshot.SelectedFiles = request.SelectedFilePaths;
             snapshot.UserRegion = request.Region.ToString();
 
             // 2) Check for PENDING invoice first - prevent duplicates

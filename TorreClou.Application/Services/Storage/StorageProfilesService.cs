@@ -122,7 +122,12 @@ namespace TorreClou.Application.Services.Storage
 
             // Check if there are any active jobs using this profile
             var activeJobs = await jobService.GetActiveJobsByStorageProfileIdAsync(profile.Id);
-            if (activeJobs.Value.Any())
+            if (activeJobs.IsFailure)
+            {
+                return Result.Failure(activeJobs.Error.Code, activeJobs.Error.Message);
+            }
+
+            if (activeJobs.Value != null && activeJobs.Value.Any())
             {
                 return Result.Failure("PROFILE_IN_USE", "Cannot disconnect profile while there are active jobs using it");
             }

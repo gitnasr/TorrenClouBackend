@@ -37,7 +37,7 @@ namespace TorreClou.Application.Services.Torrent
             var torrentInfo = torrentInfoResult.Value;
 
             // 2. Calculate Target Storage Size
-            var totalSizeResult = CalculateStorage(request.SelectedFilesPath, torrentInfo);
+            var totalSizeResult = CalculateStorage(request.SelectedFilePaths, torrentInfo);
             if (!totalSizeResult.IsSuccess)
                 return Result<QuoteResponseDto>.Failure(totalSizeResult.Error);
 
@@ -72,7 +72,7 @@ namespace TorreClou.Application.Services.Torrent
                 SizeInBytes = totalSizeInBytes,
                 HealthMultiplier = healthMultiplier,
                 IsCacheHit = false, // You might want to check if this torrent exists in S3 here for true CacheHit logic
-                SelectedFilesPath = request.SelectedFilesPath,
+                SelectedFilePaths = request.SelectedFilePaths,
                 VoucherCode = request.VoucherCode,
                 TorrentFile = torrentStoredResult.Value,
                 InfoHash = torrentInfo.InfoHash
