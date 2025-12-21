@@ -55,7 +55,6 @@ namespace TorreClou.Infrastructure.Filters
             {
                 JobStatus.QUEUED or JobStatus.DOWNLOADING or JobStatus.TORRENT_DOWNLOAD_RETRY => JobStatus.TORRENT_FAILED,
                 JobStatus.PENDING_UPLOAD or JobStatus.UPLOADING or JobStatus.UPLOAD_RETRY => JobStatus.UPLOAD_FAILED,
-                JobStatus.SYNCING or JobStatus.SYNC_RETRY => JobStatus.UPLOAD_FAILED,
                 _ => JobStatus.FAILED
             };
 
@@ -77,11 +76,11 @@ namespace TorreClou.Infrastructure.Filters
             // Correctly using SyncEntity repository
             var sync = await unitOfWork.Repository<SyncEntity>().GetByIdAsync(syncId);
 
-            if (sync == null || sync.Status == SyncStatus.Failed || sync.Status == SyncStatus.Completed) return;
+            if (sync == null || sync.Status == SyncStatus.FAILED || sync.Status == SyncStatus.COMPLETED) return;
 
             logger.LogError("[Filter] Marking Sync {SyncId} as Failed (Exhausted). Error: {Error}", syncId, error);
 
-            sync.Status = SyncStatus.Failed;
+            sync.Status = SyncStatus.FAILED;
             sync.ErrorMessage = $"System Failure: {error}";
             sync.NextRetryAt = null;
 

@@ -333,7 +333,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 var sync = new SyncEntity
                 {
                     JobId = job.Id,
-                    Status = SyncStatus.Pending,
+                    Status = SyncStatus.NotStarted,
                     LocalFilePath = job.DownloadPath,
                     S3KeyPrefix = $"torrents/{job.Id}",
                     TotalBytes = totalBytes,

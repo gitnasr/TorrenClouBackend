@@ -43,7 +43,7 @@ namespace TorreClou.Sync.Worker
             }
 
             // 4. Validate State
-            if (sync.Status != SyncStatus.Pending && sync.Status != SyncStatus.Retrying)
+            if (sync.Status != SyncStatus.NotStarted && sync.Status != SyncStatus.SYNC_RETRY)
             {
                 Logger.LogWarning("[SYNC_WORKER] Sync {Id} is {Status}, skipping.", syncId, sync.Status);
                 return true;
@@ -65,9 +65,9 @@ namespace TorreClou.Sync.Worker
             var hangfireJobId = backgroundJobClient.Enqueue<IS3SyncJob>(
                 service => service.ExecuteAsync(syncId, CancellationToken.None));
 
-            // 6. Update State & Persist ID (Missing in your original code!)
+            // 6. Update State & Persist ID 
             sync.HangfireJobId = hangfireJobId;
-            sync.Status = SyncStatus.Pending; // Update status to reflect it's in Hangfire
+            sync.Status = SyncStatus.NotStarted; 
 
             await unitOfWork.Complete();
 

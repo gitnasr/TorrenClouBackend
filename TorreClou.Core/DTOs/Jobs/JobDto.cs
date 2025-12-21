@@ -26,11 +26,9 @@ namespace TorreClou.Core.DTOs.Jobs
         public double ProgressPercentage => TotalBytes > 0 ? (BytesDownloaded / (double)TotalBytes) * 100 : 0;
         public bool IsActive => Status == JobStatus.QUEUED || 
                                Status == JobStatus.DOWNLOADING || 
-                               Status == JobStatus.SYNCING || 
                                Status == JobStatus.PENDING_UPLOAD || 
                                Status == JobStatus.UPLOADING || 
                                Status == JobStatus.TORRENT_DOWNLOAD_RETRY || 
-                               Status == JobStatus.UPLOAD_RETRY || 
-                               Status == JobStatus.SYNC_RETRY;
+                               Status == JobStatus.UPLOAD_RETRY ;
     }
 }

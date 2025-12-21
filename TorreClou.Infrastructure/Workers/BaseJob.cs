@@ -185,7 +185,6 @@ namespace TorreClou.Infrastructure.Workers
                     JobStatus retryStatus = job.Status switch
                     {
                         JobStatus.QUEUED or JobStatus.DOWNLOADING or JobStatus.TORRENT_FAILED or JobStatus.TORRENT_DOWNLOAD_RETRY => JobStatus.TORRENT_DOWNLOAD_RETRY,
-                        JobStatus.SYNCING or JobStatus.SYNC_RETRY => JobStatus.SYNC_RETRY,
                         JobStatus.PENDING_UPLOAD or JobStatus.UPLOADING or JobStatus.UPLOAD_RETRY => JobStatus.UPLOAD_RETRY,
                         _ => job.Status // For terminal states (COMPLETED, FAILED, CANCELLED, etc.), keep current status
                     };
@@ -206,7 +205,6 @@ namespace TorreClou.Infrastructure.Workers
                     JobStatus failureStatus = job.Status switch
                     {
                         JobStatus.DOWNLOADING or JobStatus.TORRENT_DOWNLOAD_RETRY or JobStatus.TORRENT_FAILED => JobStatus.TORRENT_FAILED,
-                        JobStatus.SYNCING or JobStatus.SYNC_RETRY => JobStatus.UPLOAD_FAILED, // Sync failures are upload-related
                         JobStatus.UPLOADING or JobStatus.UPLOAD_RETRY => JobStatus.UPLOAD_FAILED,
                         _ => JobStatus.FAILED // Fallback to generic failure state
                     };
@@ -247,8 +245,7 @@ namespace TorreClou.Infrastructure.Workers
             // (Hangfire will eventually mark as FAILED when exhausted)
             if (
                 job.Status == JobStatus.TORRENT_DOWNLOAD_RETRY ||
-                job.Status == JobStatus.UPLOAD_RETRY ||
-                job.Status == JobStatus.SYNC_RETRY)
+                job.Status == JobStatus.UPLOAD_RETRY )
                 return true;
 
             // For other active states, assume retries might be available
