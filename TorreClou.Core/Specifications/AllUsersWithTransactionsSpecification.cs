@@ -1,7 +1,6 @@
 using TorreClou.Core.Entities;
-using TorreClou.Core.Specifications;
 
-namespace TorreClou.Application.Services
+namespace TorreClou.Core.Specifications
 {
     public class AllUsersWithTransactionsSpecification : BaseSpecification<User>
     {

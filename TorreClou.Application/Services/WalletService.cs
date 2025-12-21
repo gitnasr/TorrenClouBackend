@@ -35,8 +35,6 @@ namespace TorreClou.Application.Services
 
             unitOfWork.Repository<WalletTransaction>().Add(transaction);
 
-            // Optimization: If User entity has a 'CurrentBalance' column, update it here atomically
-            // user.CurrentBalance += amount; 
 
             var result = await unitOfWork.Complete();
 
@@ -101,7 +99,6 @@ namespace TorreClou.Application.Services
 
             unitOfWork.Repository<WalletTransaction>().Add(transaction);
 
-            // Optimization: user.CurrentBalance -= amount;
 
             var result = await unitOfWork.Complete();
 

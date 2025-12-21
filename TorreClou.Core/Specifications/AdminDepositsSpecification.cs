@@ -1,8 +1,7 @@
 using TorreClou.Core.Entities.Financals;
 using TorreClou.Core.Enums;
-using TorreClou.Core.Specifications;
 
-namespace TorreClou.Application.Services
+namespace TorreClou.Core.Specifications
 {
     public class AdminDepositsSpecification : BaseSpecification<Deposit>
     {

@@ -16,7 +16,7 @@ namespace TorreClou.API.Controllers
             [FromQuery] int pageSize = 10,
             [FromQuery] JobStatus? status = null)
         {
-            var result = await jobService.GetUserJobsAsync(UserId, pageNumber, pageSize, status, UserRole);
+            var result = await jobService.GetUserJobsAsync(UserId, pageNumber, pageSize, status);
             return HandleResult(result);
         }
 

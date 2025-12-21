@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using TorreClou.Application.Services;
-using TorreClou.Application.Services.Google_Drive;
 using TorreClou.Core.DTOs.Storage;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Options;

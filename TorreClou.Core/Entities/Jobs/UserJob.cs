@@ -35,6 +35,7 @@ namespace TorreClou.Core.Entities.Jobs
         public DateTime? LastHeartbeat { get; set; }
 
         public string? HangfireJobId { get; set; }
+        public string? HangfireUploadJobId { get; set; }
 
         public string? DownloadPath { get; set; }
 
@@ -46,6 +47,6 @@ namespace TorreClou.Core.Entities.Jobs
 
         public Invoice? Invoice { get; set; }
 
-        public int[] SelectedFileIndices { get; set; } = [];
+        public string[] SelectedFileIndices { get; set; } = [];
     }
 }

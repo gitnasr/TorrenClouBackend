@@ -1,4 +1,3 @@
-using TorreClou.Application.Services;
 using TorreClou.Core.DTOs.Torrents;
 
 namespace TorreClou.Core.Interfaces

@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using TorreClou.Core.Interfaces;
 
-namespace TorreClou.API.Controllers
+namespace TorreClou.API.Controllers.Finance
 {
     [Route("api/invoices")]
     [ApiController]

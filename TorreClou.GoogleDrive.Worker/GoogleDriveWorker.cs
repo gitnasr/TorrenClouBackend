@@ -43,7 +43,7 @@ namespace TorreClou.GoogleDrive.Worker
             }
 
             // CRITICAL: Prevent duplicate uploads if worker restarts before ACK
-            if (!string.IsNullOrEmpty(job.HangfireJobId))
+            if (!string.IsNullOrEmpty(job.HangfireUploadJobId))
             {
                 Logger.LogInformation("[GD_WORKER] Job {Id} already enqueued (HF: {HfId}). Skipping.",
                     jobId, job.HangfireJobId);

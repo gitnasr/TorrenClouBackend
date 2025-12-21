@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using TorreClou.Application.Services;
+using TorreClou.Application.Services.Billing;
+using TorreClou.Application.Services.Storage;
 using TorreClou.Application.Services.Torrent;
 using TorreClou.Core.Interfaces;
 
@@ -23,6 +25,7 @@ namespace TorreClou.Application.Extensions
             services.AddScoped<IJobService, JobService>();
             services.AddScoped<IGoogleDriveAuthService, GoogleDriveAuthService>();
             services.AddScoped<IInvoiceService, InvoiceService>();
+            services.AddScoped<IStorageProfilesService, StorageProfilesService>();
 
             return services;
         }

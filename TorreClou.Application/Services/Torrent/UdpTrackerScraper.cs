@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Net;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.DTOs.Torrents;
+using TorreClou.Core.Entities.Torrents;
 
 namespace TorreClou.Application.Services.Torrent
 {

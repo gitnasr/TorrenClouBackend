@@ -1,6 +1,6 @@
 ﻿using TorreClou.Core.Enums;
 
-namespace TorreClou.Core.DTOs
+namespace TorreClou.Core.Models.Pricing
 {
     public class QuoteInput
     {

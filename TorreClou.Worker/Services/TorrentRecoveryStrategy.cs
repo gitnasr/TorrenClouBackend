@@ -3,9 +3,8 @@ using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Interfaces.Hangfire;
-using TorreClou.Worker.Services;
 
-namespace TorreClou.Worker.Services.Strategies
+namespace TorreClou.Worker.Services
 {
     public class TorrentRecoveryStrategy : IJobRecoveryStrategy
     {

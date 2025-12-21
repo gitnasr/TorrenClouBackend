@@ -14,7 +14,7 @@ using TorreClou.Infrastructure.Services.Redis;
 using TorreClou.Core.Interfaces;
 using Serilog.Core;
 
-namespace TorreClou.API.Extensions
+namespace TorreClou.Infrastructure.Extensions
 {
     public static class SharedConfigurationExtensions
     {

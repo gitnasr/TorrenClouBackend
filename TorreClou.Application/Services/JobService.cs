@@ -93,23 +93,12 @@ namespace TorreClou.Application.Services
                 StorageProfileId = defaultStorageProfile?.Id,
             });
         }
-        public async Task<Result<PaginatedResult<JobDto>>> GetUserJobsAsync(int userId, int pageNumber, int pageSize, JobStatus? status = null, UserRole? userRole = null)
+        public async Task<Result<PaginatedResult<JobDto>>> GetUserJobsAsync(int userId, int pageNumber, int pageSize, JobStatus? status = null)
         {
-            var spec = new UserJobsSpecification(userId, pageNumber, pageSize, status, userRole);
-            // Count spec should use the same filtering logic
+            var spec = new UserJobsSpecification(userId, pageNumber, pageSize, status);
             var countSpec = new BaseSpecification<UserJob>(job => 
-                job.UserId == userId && 
-                (status == null || job.Status == status) &&
-                // Filter logic: 
-                // - Sync type jobs are internal - only visible to Admin/Support
-                // - SYNCING and SYNC_RETRY statuses are for Sync jobs - regular users should never see them
-                // - Regular users only see Torrent type jobs with statuses other than SYNCING/SYNC_RETRY
-                (userRole == null || 
-                 userRole == UserRole.Admin || 
-                 userRole == UserRole.Support ||
-                 (job.Type == JobType.Torrent && 
-                  job.Status != JobStatus.SYNCING && 
-                  job.Status != JobStatus.SYNC_RETRY))); // Regular users: Torrent jobs only, excluding SYNCING/SYNC_RETRY
+                job.UserId == userId 
+               ); 
 
             var jobs = await unitOfWork.Repository<UserJob>().ListAsync(spec);
             var totalCount = await unitOfWork.Repository<UserJob>().CountAsync(countSpec);
@@ -130,7 +119,7 @@ namespace TorreClou.Application.Services
                 LastHeartbeat = job.LastHeartbeat,
                 BytesDownloaded = job.BytesDownloaded,
                 TotalBytes = job.TotalBytes,
-                SelectedFileIndices = job.SelectedFileIndices,
+                SelectedFilesPath = job.SelectedFileIndices,
                 CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt
             }).ToList();
@@ -148,17 +137,7 @@ namespace TorreClou.Application.Services
         {
             var spec = new BaseSpecification<UserJob>(job => 
                 job.Id == jobId && 
-                job.UserId == userId &&
-                // Apply same filtering logic as list:
-                // - Sync type jobs are internal - only visible to Admin/Support
-                // - SYNCING and SYNC_RETRY statuses are for Sync jobs - regular users should never see them
-                // - Regular users only see Torrent type jobs with statuses other than SYNCING/SYNC_RETRY
-                (userRole == null || 
-                 userRole == UserRole.Admin || 
-                 userRole == UserRole.Support ||
-                 (job.Type == JobType.Torrent && 
-                  job.Status != JobStatus.SYNCING && 
-                  job.Status != JobStatus.SYNC_RETRY))); // Regular users: Torrent jobs only, excluding SYNCING/SYNC_RETRY
+                job.UserId == userId ); 
             spec.AddInclude(job => job.StorageProfile);
             spec.AddInclude(job => job.RequestFile);
 
@@ -185,7 +164,7 @@ namespace TorreClou.Application.Services
                 LastHeartbeat = job.LastHeartbeat,
                 BytesDownloaded = job.BytesDownloaded,
                 TotalBytes = job.TotalBytes,
-                SelectedFileIndices = job.SelectedFileIndices,
+                SelectedFilesPath = job.SelectedFileIndices,
                 CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt
             });
@@ -215,7 +194,7 @@ namespace TorreClou.Application.Services
             return Result.Success(statistics);
         }
 
-        private static int[] ExtractSelectedFilesFromSnapshot(string pricingSnapshotJson)
+        private static string[] ExtractSelectedFilesFromSnapshot(string pricingSnapshotJson)
         {
             if (string.IsNullOrEmpty(pricingSnapshotJson))
                 return [];

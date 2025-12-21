@@ -94,14 +94,14 @@ namespace TorreClou.Application.Services.Torrent
             }
         }
 
-        public async Task<Result<RequestedFile>> FindOrCreateTorrentFile(RequestedFile torrent, Stream? fileStream = null)
+        public async Task<Result<RequestedFile>> FindOrCreateTorrentFile(TorrentInfoDto torrent, int userId, Stream? fileStream = null)
         {
             // Validate that the user exists before proceeding
-            var user = await unitOfWork.Repository<User>().GetByIdAsync(torrent.UploadedByUserId);
+            var user = await unitOfWork.Repository<User>().GetByIdAsync(userId);
             if (user == null)
             {
                 return Result<RequestedFile>.Failure("USER_NOT_FOUND", 
-                    $"User with ID {torrent.UploadedByUserId} does not exist. Cannot create RequestedFile.");
+                    $"User with ID {userId} does not exist. Cannot create RequestedFile.");
             }
 
             // Validate required fields
@@ -111,13 +111,13 @@ namespace TorreClou.Application.Services.Torrent
                     "InfoHash is required and cannot be empty. Cannot create or find RequestedFile.");
             }
 
-            if (string.IsNullOrWhiteSpace(torrent.FileName))
+            if (string.IsNullOrWhiteSpace(torrent.Name))
             {
                 return Result<RequestedFile>.Failure("INVALID_FILENAME", 
                     "FileName is required and cannot be empty. Cannot create RequestedFile.");
             }
 
-            if (torrent.FileSize <= 0)
+            if (torrent.TotalSize <= 0)
             {
                 return Result<RequestedFile>.Failure("INVALID_FILESIZE", 
                     "FileSize must be greater than zero. Cannot create RequestedFile.");
@@ -126,7 +126,7 @@ namespace TorreClou.Application.Services.Torrent
             // Check if this specific user has already uploaded this torrent
             var searchCriteria = new BaseSpecification<RequestedFile>(t =>
                 t.InfoHash == torrent.InfoHash &&
-                t.UploadedByUserId == torrent.UploadedByUserId);
+                t.UploadedByUserId == userId);
 
             var existingTorrent = await unitOfWork.Repository<RequestedFile>().GetEntityWithSpec(searchCriteria);
 
@@ -152,6 +152,16 @@ namespace TorreClou.Application.Services.Torrent
             // EF Core will use the foreign key value to establish the relationship
 
             // Upload to blob storage if stream provided
+            var newTorrentFile = new RequestedFile
+            {
+                InfoHash = torrent.InfoHash,
+                FileName = torrent.Name,
+                FileSize = torrent.TotalSize,
+                Files = torrent.Files.Select(f => f.Path).ToArray(),
+                UploadedByUserId = userId,
+                FileType = "Torrent",
+                
+            };
             if (fileStream != null)
             {
                 var uploadResult = await UploadTorrentBlobAsync(fileStream, torrent.InfoHash);
@@ -160,14 +170,14 @@ namespace TorreClou.Application.Services.Torrent
                     return Result<RequestedFile>.Failure("UPLOAD_FAILED", 
                         $"Failed to upload torrent file to blob storage: {uploadResult.Error?.Message ?? "Unknown error"}. Cannot create RequestedFile.");
                 }
-                
-                torrent.DirectUrl = uploadResult.Value;
+
+                newTorrentFile.DirectUrl = uploadResult.Value;
             }
 
-            unitOfWork.Repository<RequestedFile>().Add(torrent);
+            unitOfWork.Repository<RequestedFile>().Add(newTorrentFile);
             await unitOfWork.Complete();
 
-            return Result.Success(torrent);
+            return Result.Success(newTorrentFile);
         }
 
         private async Task<Result<string>> UploadTorrentBlobAsync(Stream fileStream, string infoHash)

@@ -14,10 +14,19 @@ namespace TorreClou.Application.Services.Torrent
         IUnitOfWork unitOfWork,
         ITorrentService torrentService,
         IQuotePricingService quotePricingService,
+        IStorageProfilesService storageProfilesService,
         ITorrentHealthService torrentHealthService) : ITorrentQuoteService 
     {
         public async Task<Result<QuoteResponseDto>> GenerateQuoteAsync(QuoteRequestDto request, int userId, Stream torrentFile)
         {
+            //0. Check even if the user has active storage profile
+            var IsActiveStorageProfile = await storageProfilesService.ValidateActiveStorageProfileByUserId(userId, request.StorageProfileId);
+
+            if (!IsActiveStorageProfile.IsSuccess)
+                return Result<QuoteResponseDto>.Failure(IsActiveStorageProfile.Error);
+
+
+
             // 1. Validate & Parse Torrent
             var torrentFileValidated = ValidateTorrentFile(torrentFile, request.TorrentFile.FileName);
             if (!torrentFileValidated.IsSuccess)
@@ -30,7 +39,7 @@ namespace TorreClou.Application.Services.Torrent
             var torrentInfo = torrentInfoResult.Value;
 
             // 2. Calculate Target Storage Size
-            var totalSizeResult = CalculateStorage(request.SelectedFileIndices, torrentInfo);
+            var totalSizeResult = CalculateStorage(request.SelectedFilesPath, torrentInfo);
             if (!totalSizeResult.IsSuccess)
                 return Result<QuoteResponseDto>.Failure(totalSizeResult.Error);
 
@@ -50,17 +59,11 @@ namespace TorreClou.Application.Services.Torrent
             // Ensure stream is ready for reading
             if (torrentFile.CanSeek) torrentFile.Position = 0;
 
-            var torrentInDbResult = await torrentService.FindOrCreateTorrentFile(new RequestedFile
-            {
-                InfoHash = torrentInfo.InfoHash,
-                FileName = torrentInfo.Name,
-                FileSize = torrentInfo.TotalSize,
-                Files = torrentInfo.Files.Select(f => f.Path).ToArray(),
-                UploadedByUserId = userId,
-                FileType = "Torrent"
-            }, torrentFile);
+      
 
-            if (torrentInDbResult.IsFailure)
+            var torrentStoredResult = await torrentService.FindOrCreateTorrentFile(torrentInfo,userId, torrentFile);
+
+            if (torrentStoredResult.IsFailure)
                 return Result<QuoteResponseDto>.Failure("Failed to save torrent information.");
 
             // 6. Generate or Reuse Invoice (Single Source of Truth for Pricing)
@@ -71,9 +74,9 @@ namespace TorreClou.Application.Services.Torrent
                 SizeInBytes = totalSizeInBytes,
                 HealthMultiplier = healthMultiplier,
                 IsCacheHit = false, // You might want to check if this torrent exists in S3 here for true CacheHit logic
-                SelectedFiles = request.SelectedFileIndices?.ToList() ?? new List<int>(),
+                SelectedFilesPath = request.SelectedFilesPath,
                 VoucherCode = request.VoucherCode,
-                TorrentFile = torrentInDbResult.Value,
+                TorrentFile = torrentStoredResult.Value,
                 InfoHash = torrentInfo.InfoHash
             };
 
@@ -136,7 +139,7 @@ namespace TorreClou.Application.Services.Torrent
             return Result<Stream>.Success(torrentFile);
         }
 
-        private Result<long> CalculateStorage(List<int>? selectedFileIndices, TorrentInfoDto torrentInfo)
+        private Result<long> CalculateStorage(List<string>? selectedFileIndices, TorrentInfoDto torrentInfo)
         {
             if (torrentInfo.TotalSize == 0)
                 return Result.Failure<long>("Torrent total size is zero.");
@@ -147,7 +150,7 @@ namespace TorreClou.Application.Services.Torrent
             }
 
             long targetSize = torrentInfo.Files
-                .Where(f => selectedFileIndices.Contains(f.Index))
+                .Where(f => selectedFileIndices.Contains(f.Path))
                 .Sum(f => f.Size);
 
             if (targetSize == 0)
