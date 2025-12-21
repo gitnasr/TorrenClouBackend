@@ -12,6 +12,7 @@ using TorreClou.Infrastructure.Repositories;
 using TorreClou.Infrastructure.Interceptors;
 using TorreClou.Infrastructure.Services.Redis;
 using TorreClou.Core.Interfaces;
+using Serilog.Core;
 
 namespace TorreClou.API.Extensions
 {
@@ -67,14 +68,10 @@ namespace TorreClou.API.Extensions
         public static IServiceCollection AddSharedRedis(this IServiceCollection services, IConfiguration config)
         {
             var redisConn = config.GetSection("Redis:ConnectionString").Value ?? "localhost:6379";
-            
-            // Configure Redis connection to allow retries instead of failing immediately
-            var configurationOptions = ConfigurationOptions.Parse(redisConn);
-            configurationOptions.AbortOnConnectFail = false; // Allow retries in background
-            configurationOptions.ConnectRetry = 3; // Retry 3 times
-            configurationOptions.ConnectTimeout = 5000; // 5 second timeout per attempt
-            
-            services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(configurationOptions));
+          
+            Console.WriteLine($"[Redis] Connecting to: {redisConn}");
+
+            services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisConn));
 
             services.AddSingleton<IRedisCacheService, RedisCacheService>();
             services.AddScoped<IRedisLockService, RedisLockService>();
