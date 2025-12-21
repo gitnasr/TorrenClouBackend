@@ -1,0 +1,15 @@
+# Ignore IDE and build artifacts
+.git
+.github
+.vs
+.vscode
+**/bin
+**/obj
+
+# Ignore solution file to prevent MSBuild from auto-discovering projects
+TorreClou.sln
+
+# Ignore scripts and docs
+*.md
+*.sh
+*.ps1
