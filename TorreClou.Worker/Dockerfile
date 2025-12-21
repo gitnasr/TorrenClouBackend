@@ -22,8 +22,8 @@ COPY TorreClou.Worker/ TorreClou.Worker/
 
 # Build and publish
 WORKDIR /src/TorreClou.Worker
-RUN dotnet build -c Release --no-restore -o /app/build
-RUN dotnet publish -c Release --no-restore -o /app/publish /p:UseAppHost=false
+RUN dotnet build TorreClou.Worker.csproj -c Release --no-restore -o /app/build
+RUN dotnet publish TorreClou.Worker.csproj -c Release --no-restore -o /app/publish /p:UseAppHost=false
 
 # Stage 2: Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime

@@ -187,7 +187,8 @@ namespace TorreClou.Infrastructure.Workers
                     {
                         JobStatus.QUEUED or JobStatus.DOWNLOADING or JobStatus.TORRENT_FAILED or JobStatus.TORRENT_DOWNLOAD_RETRY => JobStatus.TORRENT_DOWNLOAD_RETRY,
                         JobStatus.SYNCING or JobStatus.SYNC_RETRY => JobStatus.SYNC_RETRY,
-                        JobStatus.UPLOADING or JobStatus.UPLOAD_RETRY => JobStatus.UPLOAD_RETRY,
+                        JobStatus.PENDING_UPLOAD or JobStatus.UPLOADING or JobStatus.UPLOAD_RETRY => JobStatus.UPLOAD_RETRY,
+                        _ => job.Status // For terminal states (COMPLETED, FAILED, CANCELLED, etc.), keep current status
                     };
                     
                     job.Status = retryStatus;
