@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using TorreClou.Application.Services;
 using TorreClou.Core.DTOs.Financal;
@@ -7,6 +8,7 @@ using TorreClou.Core.Shared;
 
 namespace TorreClou.API.Controllers.Finance
 {
+    [Authorize]
     [Route("api/finance/wallet")]
     [ApiController]
     public class WalletController(IWalletService walletService) : BaseApiController

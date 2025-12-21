@@ -77,9 +77,8 @@ namespace TorreClou.Worker.Services
                     return;
                 }
                 var downloadableSize = torrent.Files
-                    .Select((file, index) => new { file.Length, index, file.Path })
-                    .Where(x => job.SelectedFileIndices.Contains(x.Path))
-                    .Sum(x => x.Length);
+                    .Where(file => job.SelectedFilePaths.Contains(file.Path))
+                    .Sum(file => file.Length);
                 job.Status = JobStatus.DOWNLOADING;
                 job.StartedAt ??= DateTime.UtcNow;
                 job.LastHeartbeat = DateTime.UtcNow;
@@ -92,14 +91,13 @@ namespace TorreClou.Worker.Services
                 _engine = CreateEngine(downloadPath);
                 manager = await _engine.AddAsync(torrent, downloadPath);
                 var progress = manager.Progress;
-                var selectedSet = new HashSet<string>(job.SelectedFileIndices);
+                var selectedSet = new HashSet<string>(job.SelectedFilePaths);
                 foreach (var file in manager.Files)
                 {
                     // Check if the file's path exists in your selected list
                     if (selectedSet.Contains(file.Path))
                     {
-                        // MonoTorrent standard: Set property directly (no await needed for priority)
-                     await  manager.SetFilePriorityAsync(file, Priority.Normal);
+                        await manager.SetFilePriorityAsync(file, Priority.Normal);
                         Logger.LogInformation(
                             "{LogPrefix} Selected file for download | JobId: {JobId} | FilePath: {FilePath} | SizeMB: {SizeMB:F2} MB",
                             LogPrefix, job.Id, file.Path, file.Length / (1024.0 * 1024.0));

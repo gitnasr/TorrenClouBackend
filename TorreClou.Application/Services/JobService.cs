@@ -67,7 +67,7 @@ namespace TorreClou.Application.Services
                 Status = JobStatus.QUEUED,
                 Type = JobType.Torrent,
                 RequestFileId = invoice.TorrentFileId,
-                SelectedFileIndices = ExtractSelectedFilesFromSnapshot(invoice.PricingSnapshotJson)
+                SelectedFilePaths = ExtractSelectedFilesFromSnapshot(invoice.PricingSnapshotJson)
             };
 
             unitOfWork.Repository<UserJob>().Add(job);
@@ -119,7 +119,7 @@ namespace TorreClou.Application.Services
                 LastHeartbeat = job.LastHeartbeat,
                 BytesDownloaded = job.BytesDownloaded,
                 TotalBytes = job.TotalBytes,
-                SelectedFilesPath = job.SelectedFileIndices,
+                SelectedFilesPath = job.SelectedFilePaths,
                 CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt
             }).ToList();
@@ -164,7 +164,7 @@ namespace TorreClou.Application.Services
                 LastHeartbeat = job.LastHeartbeat,
                 BytesDownloaded = job.BytesDownloaded,
                 TotalBytes = job.TotalBytes,
-                SelectedFilesPath = job.SelectedFileIndices,
+                SelectedFilesPath = job.SelectedFilePaths,
                 CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt
             });

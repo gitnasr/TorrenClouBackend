@@ -47,6 +47,6 @@ namespace TorreClou.Core.Entities.Jobs
 
         public Invoice? Invoice { get; set; }
 
-        public string[] SelectedFileIndices { get; set; } = [];
+        public string[] SelectedFilePaths { get; set; } = [];
     }
 }
