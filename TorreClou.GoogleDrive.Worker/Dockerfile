@@ -38,6 +38,10 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 # Copy published output
 COPY --from=build /app/publish .
 
+# Explicitly copy appsettings.json from build stage source (ensures it's available)
+# dotnet publish should include it, but this guarantees it's present
+COPY --from=build /src/TorreClou.GoogleDrive.Worker/appsettings.json ./appsettings.json
+
 # Copy entrypoint script
 COPY TorreClou.GoogleDrive.Worker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

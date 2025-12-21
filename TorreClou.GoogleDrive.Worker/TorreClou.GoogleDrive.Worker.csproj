@@ -38,5 +38,15 @@
     <ProjectReference Include="..\TorreClou.Application\TorreClou.Application.csproj" />
     <ProjectReference Include="..\TorreClou.Infrastructure\TorreClou.Infrastructure.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- Explicitly include appsettings files to ensure they're published -->
+    <Content Include="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="appsettings.*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 </Project>
 
