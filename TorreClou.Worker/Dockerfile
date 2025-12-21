@@ -22,6 +22,7 @@ COPY TorreClou.Core/ TorreClou.Core/
 COPY TorreClou.Application/ TorreClou.Application/
 COPY TorreClou.Infrastructure/ TorreClou.Infrastructure/
 COPY TorreClou.Worker/ TorreClou.Worker/
+COPY TorreClou.GoogleDrive.Worker/ TorreClou.GoogleDrive.Worker/
 
 # Build and publish
 WORKDIR /src/TorreClou.Worker
