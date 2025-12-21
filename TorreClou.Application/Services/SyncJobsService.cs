@@ -108,13 +108,11 @@ namespace TorreClou.Application.Services
                 TotalSyncJobs = allSyncJobs.Count,
                 ActiveSyncJobs = allSyncJobs.Count(s => 
                     s.Status == SyncStatus.SYNCING || 
-                    s.Status == SyncStatus.InProgress || 
                     s.Status == SyncStatus.SYNC_RETRY),
                 CompletedSyncJobs = allSyncJobs.Count(s => s.Status == SyncStatus.COMPLETED),
                 FailedSyncJobs = allSyncJobs.Count(s => s.Status == SyncStatus.FAILED),
                 SyncingJobs = allSyncJobs.Count(s => s.Status == SyncStatus.SYNCING),
                 NotStartedJobs = allSyncJobs.Count(s => s.Status == SyncStatus.NotStarted),
-                InProgressJobs = allSyncJobs.Count(s => s.Status == SyncStatus.InProgress),
                 RetryingJobs = allSyncJobs.Count(s => s.Status == SyncStatus.SYNC_RETRY)
             };
 
