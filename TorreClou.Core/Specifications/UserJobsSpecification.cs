@@ -7,7 +7,7 @@ namespace TorreClou.Core.Specifications
     {
         public UserJobsSpecification(int userId, int pageNumber, int pageSize, JobStatus? status = null )
             : base(job => 
-                job.UserId == userId )
+                job.UserId == userId && (status == null || job.Status == status))
               
         {
             AddInclude(job => job.StorageProfile);

@@ -97,7 +97,7 @@ namespace TorreClou.Application.Services
         {
             var spec = new UserJobsSpecification(userId, pageNumber, pageSize, status);
             var countSpec = new BaseSpecification<UserJob>(job => 
-                job.UserId == userId 
+                job.UserId == userId && (status == null || job.Status == status)
                ); 
 
             var jobs = await unitOfWork.Repository<UserJob>().ListAsync(spec);
