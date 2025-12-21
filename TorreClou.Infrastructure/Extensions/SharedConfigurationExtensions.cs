@@ -67,7 +67,14 @@ namespace TorreClou.API.Extensions
         public static IServiceCollection AddSharedRedis(this IServiceCollection services, IConfiguration config)
         {
             var redisConn = config.GetSection("Redis:ConnectionString").Value ?? "localhost:6379";
-            services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisConn));
+            
+            // Configure Redis connection to allow retries instead of failing immediately
+            var configurationOptions = ConfigurationOptions.Parse(redisConn);
+            configurationOptions.AbortOnConnectFail = false; // Allow retries in background
+            configurationOptions.ConnectRetry = 3; // Retry 3 times
+            configurationOptions.ConnectTimeout = 5000; // 5 second timeout per attempt
+            
+            services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(configurationOptions));
 
             services.AddSingleton<IRedisCacheService, RedisCacheService>();
             services.AddScoped<IRedisLockService, RedisLockService>();
