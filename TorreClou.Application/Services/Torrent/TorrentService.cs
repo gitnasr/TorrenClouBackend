@@ -10,7 +10,7 @@ namespace TorreClou.Application.Services.Torrent
     public class TorrentService(
         IUnitOfWork unitOfWork,
         ITrackerScraper trackerScraper,
-        IBlobStorageService blobStorageService) : ITorrentService
+        IBlobStorageService blobStorageService, ITorrentHealthService torrentHealthService) : ITorrentService
     {
         // Ideally move this to configuration
         private static readonly string[] FallbackTrackers =
@@ -68,7 +68,8 @@ namespace TorreClou.Application.Services.Torrent
                 // 4. Scrape Health (Ideally with short timeout)
                 // We pass the hash and list to the scraper service
                 var scrape = await trackerScraper.GetScrapeResultsAsync(hash, udpTrackers);
-
+                var health = torrentHealthService.Compute(scrape);
+                var healthMultiplier = 1 + (1 - health.HealthScore);
                 // 5. Build DTO
                 var dto = new TorrentInfoDto
                 {
@@ -76,12 +77,14 @@ namespace TorreClou.Application.Services.Torrent
                     InfoHash = hash,
                     TotalSize = torrent.Size,
                     Trackers = udpTrackers,
-                    Files = torrent.Files.Select((f, index) => new TorrentFileDto
+                    Files = [.. torrent.Files.Select((f, index) => new TorrentFileDto
                     {
                         Index = index,
                         Path = f.Path,
                         Size = f.Length
-                    }).ToList(),
+                    })],
+                    HealthScore = health.HealthScore,
+                    HealthMultiplier = healthMultiplier,
                     ScrapeResult = scrape
                 };
 

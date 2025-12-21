@@ -9,7 +9,7 @@ public record QuoteResponseDto
     public decimal FinalAmountInUSD { get; init; }
     public decimal FinalAmountInNCurrency { get; init; }
 
-    public TorrentHealthMeasurements TorrentHealth { get; init; }
+    public TorrentHealthMeasurements TorrentHealth { get; init; } = null!;
 
     public string FileName { get; init; } = string.Empty;
 
