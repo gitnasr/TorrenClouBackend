@@ -17,7 +17,7 @@ namespace TorreClou.Sync.Worker.Services
         IUnitOfWork unitOfWork,
         ILogger<S3SyncJob> logger,
         IOptions<BackblazeSettings> backblazeSettings,
-        IS3ResumableUploadService s3UploadService) : BaseJob<S3SyncJob>(unitOfWork, logger), IS3SyncJob
+        IS3ResumableUploadService s3UploadService) : SyncJobBase<S3SyncJob>(unitOfWork, logger), IS3SyncJob
     {
         private readonly BackblazeSettings _backblazeSettings = backblazeSettings.Value;
         private const long PartSize = 10 * 1024 * 1024; // 10MB per part
@@ -25,60 +25,13 @@ namespace TorreClou.Sync.Worker.Services
 
         protected override string LogPrefix => "[S3:SYNC]";
 
-        protected override void ConfigureSpecification(BaseSpecification<UserJob> spec)
-        {
-            spec.AddInclude(j => j.StorageProfile);
-            spec.AddInclude(j => j.User);
-        }
-
- 
-        public new async Task ExecuteAsync(int syncId, CancellationToken cancellationToken = default)
-        {
-            try
-            {
-                Logger.LogInformation("{LogPrefix} Starting S3 sync job | SyncId: {SyncId}", LogPrefix, syncId);
-
-                var syncRepository = UnitOfWork.Repository<SyncEntity>();
-                var sync = await syncRepository.GetByIdAsync(syncId);
-                if (sync == null)
-                {
-                    Logger.LogError("{LogPrefix} Sync entity not found | SyncId: {SyncId}", LogPrefix, syncId);
-                    return;
-                }
-
-                var jobRepository = UnitOfWork.Repository<UserJob>();
-                var job = await jobRepository.GetByIdAsync(sync.JobId);
-                if (job == null)
-                {
-                    Logger.LogError("{LogPrefix} UserJob not found | SyncId: {SyncId} | JobId: {JobId}",
-                        LogPrefix, syncId, sync.JobId);
-                    sync.Status = SyncStatus.FAILED;
-                    sync.ErrorMessage = "UserJob not found";
-                    await UnitOfWork.Complete();
-                    return;
-                }
-
-                await ExecuteCoreAsync(sync, job, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "{LogPrefix} Fatal error in S3 sync job | SyncId: {SyncId}", LogPrefix, syncId);
-                throw;
-            }
-        }
-
-        protected override async Task ExecuteCoreAsync(UserJob job, CancellationToken cancellationToken)
-        {
-            throw new NotImplementedException("Use ExecuteAsync(int syncId) instead");
-        }
-
-        private async Task ExecuteCoreAsync(SyncEntity sync, UserJob job, CancellationToken cancellationToken)
+        protected override async Task ExecuteCoreAsync(SyncEntity sync, UserJob job, CancellationToken cancellationToken)
         {
             var originalDownloadPath = sync.LocalFilePath ?? job.DownloadPath;
 
             try
             {
-                if (sync.Status != SyncStatus.NotStarted && sync.Status != SyncStatus.SYNC_RETRY)
+                if (sync.Status != SyncStatus.PENDING && sync.Status != SyncStatus.SYNC_RETRY)
                 {
                     Logger.LogWarning("{LogPrefix} Sync invalid state | SyncId: {SyncId} | Status: {Status}",
                         LogPrefix, sync.Id, sync.Status);
@@ -96,6 +49,7 @@ namespace TorreClou.Sync.Worker.Services
 
                 sync.Status = SyncStatus.SYNCING;
                 sync.StartedAt = DateTime.UtcNow;
+                sync.LastHeartbeat = DateTime.UtcNow;
                 await UnitOfWork.Complete();
 
                 var filesToUpload = GetFilesToUpload(originalDownloadPath);
@@ -145,9 +99,10 @@ namespace TorreClou.Sync.Worker.Services
                     {
                         sync.BytesSynced = overallBytesUploaded;
                         sync.FilesSynced = filesSynced;
+                        sync.LastHeartbeat = now;
                         await UnitOfWork.Complete();
 
-                        var percent = (overallBytesUploaded / (double)totalBytes) * 100;
+                        var percent = overallBytesUploaded / (double)totalBytes * 100;
                         Logger.LogInformation("{LogPrefix} Progress: {Percent:F1}% | {Uploaded}/{Total} MB",
                             LogPrefix, percent, overallBytesUploaded >> 20, totalBytes >> 20);
 
@@ -341,7 +296,7 @@ namespace TorreClou.Sync.Worker.Services
             catch { return []; }
         }
 
-        private async Task CleanupBlockStorageAsync(string path)
+        private Task CleanupBlockStorageAsync(string path)
         {
             try
             {
@@ -352,6 +307,7 @@ namespace TorreClou.Sync.Worker.Services
             {
                 Logger.LogWarning(ex, "{LogPrefix} Cleanup failed (non-critical)", LogPrefix);
             }
+            return Task.CompletedTask;
         }
 
         // --- Serialization Helpers (Keep as is) ---
@@ -361,18 +317,5 @@ namespace TorreClou.Sync.Worker.Services
             catch { return []; }
         }
         private string SerializePartETags(List<PartETag> parts) => JsonSerializer.Serialize(parts);
-
-        private async Task MarkSyncFailedAsync(SyncEntity sync, string msg, bool hasRetries)
-        {
-            sync.Status = hasRetries ? SyncStatus.SYNC_RETRY : SyncStatus.FAILED;
-            sync.ErrorMessage = msg;
-            if (hasRetries)
-            {
-                sync.RetryCount++;
-                sync.NextRetryAt = DateTime.UtcNow.AddMinutes(5 * sync.RetryCount);
-            }
-            await UnitOfWork.Complete();
-            Logger.LogError("{LogPrefix} Failed: {Error}", LogPrefix, msg);
-        }
     }
 }

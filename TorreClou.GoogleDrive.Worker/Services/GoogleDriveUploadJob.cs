@@ -20,7 +20,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
         ITransferSpeedMetrics speedMetrics,
         IOptions<BackblazeSettings> backblazeSettings,
         IRedisLockService redisLockService,
-        IRedisStreamService redisStreamService) : BaseJob<GoogleDriveUploadJob>(unitOfWork, logger), IGoogleDriveUploadJob
+        IRedisStreamService redisStreamService) : UserJobBase<GoogleDriveUploadJob>(unitOfWork, logger), IGoogleDriveUploadJob
     {
 
         protected override string LogPrefix => "[GOOGLE_DRIVE:UPLOAD]";
@@ -333,7 +333,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 var sync = new SyncEntity
                 {
                     JobId = job.Id,
-                    Status = SyncStatus.NotStarted,
+                    Status = SyncStatus.PENDING,
                     LocalFilePath = job.DownloadPath,
                     S3KeyPrefix = $"torrents/{job.Id}",
                     TotalBytes = totalBytes,

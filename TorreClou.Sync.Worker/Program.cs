@@ -1,12 +1,10 @@
 using Hangfire;
 using Serilog;
-using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Interfaces.Hangfire;
 using TorreClou.Core.Options;
 using TorreClou.Infrastructure.Extensions;
 using TorreClou.Infrastructure.Filters;
-using TorreClou.Infrastructure.Services;
 using TorreClou.Infrastructure.Services.S3;
 using TorreClou.Infrastructure.Settings;
 using TorreClou.Sync.Worker;
@@ -53,7 +51,7 @@ try
         opts.CheckInterval = TimeSpan.FromMinutes(2);
         opts.StaleJobThreshold = TimeSpan.FromMinutes(5);
     });
-    builder.Services.AddHostedService<JobHealthMonitor<UserJob>>();
+    builder.Services.AddHostedService<SyncRecoveryService>();
     builder.Services.AddHostedService<SyncWorker>();
 
     var host = builder.Build();

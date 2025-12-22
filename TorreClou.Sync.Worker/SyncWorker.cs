@@ -43,7 +43,7 @@ namespace TorreClou.Sync.Worker
             }
 
             // 4. Validate State
-            if (sync.Status != SyncStatus.NotStarted && sync.Status != SyncStatus.SYNC_RETRY)
+            if (sync.Status != SyncStatus.PENDING && sync.Status != SyncStatus.SYNC_RETRY)
             {
                 Logger.LogWarning("[SYNC_WORKER] Sync {Id} is {Status}, skipping.", syncId, sync.Status);
                 return true;

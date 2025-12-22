@@ -11,18 +11,10 @@ namespace TorreClou.Infrastructure.Workers
     /// Implements Template Method pattern for consistent job lifecycle management.
     /// </summary>
     /// <typeparam name="TJob">The concrete job type for logger categorization.</typeparam>
-    public abstract class BaseJob<TJob>(
+    public abstract class UserJobBase<TJob>(
         IUnitOfWork unitOfWork,
-        ILogger<TJob> logger) where TJob : class
+        ILogger<TJob> logger) : JobBase<TJob>(unitOfWork, logger) where TJob : class
     {
-        protected readonly IUnitOfWork UnitOfWork = unitOfWork;
-        protected readonly ILogger<TJob> Logger = logger;
-
-        /// <summary>
-        /// Log prefix for consistent logging (e.g., "[DOWNLOAD]", "[UPLOAD]").
-        /// </summary>
-        protected abstract string LogPrefix { get; }
-
         /// <summary>
         /// Template method that orchestrates the job execution lifecycle.
         /// Subclasses should override ExecuteCoreAsync for specific job logic.

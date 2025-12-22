@@ -30,7 +30,7 @@
         SYNCING,
         FAILED,
         COMPLETED,
-        NotStarted
+        PENDING
     }
     public enum JobStatus 
     { 
