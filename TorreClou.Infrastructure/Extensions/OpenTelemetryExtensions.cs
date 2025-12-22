@@ -6,6 +6,7 @@ using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using System.Web;
 
 namespace TorreClou.Infrastructure.Extensions
 {
@@ -24,7 +25,16 @@ namespace TorreClou.Infrastructure.Extensions
             var enableLogging = observabilityConfig.GetValue<bool>("EnableLogging", true);
 
             var otlpEndpoint = observabilityConfig["OtlpEndpoint"];
+            // Decode URL-encoded headers
             var otlpHeaders = observabilityConfig["OtlpHeaders"];
+            if (!string.IsNullOrEmpty(otlpHeaders))
+            {
+                otlpHeaders = HttpUtility.UrlDecode(otlpHeaders);
+            }
+            
+            Console.WriteLine($"[OTEL] Configuring OpenTelemetry for {serviceName}");
+            Console.WriteLine($"[OTEL] Prometheus local exporter: {enablePrometheus}");
+            Console.WriteLine($"[OTEL] Tracing: {enableTracing}");
 
             // 1. Define Resource ONCE (Shared by Traces, Metrics, Logs)
             var resourceBuilder = ResourceBuilder.CreateDefault()
@@ -40,6 +50,7 @@ namespace TorreClou.Infrastructure.Extensions
                 .WithMetrics(metrics =>
                 {
                     metrics.SetResourceBuilder(resourceBuilder)
+                           .AddMeter("TorreClou.Transfer") // Custom metrics for download/upload speeds
                            .AddHttpClientInstrumentation()
                            .AddRuntimeInstrumentation()
                            .AddProcessInstrumentation();
@@ -47,17 +58,11 @@ namespace TorreClou.Infrastructure.Extensions
                     if (includeAspNetCoreInstrumentation)
                         metrics.AddAspNetCoreInstrumentation();
 
+                    // Always enable local Prometheus exporter for /metrics endpoint
                     if (enablePrometheus)
                         metrics.AddPrometheusExporter();
-
-                    if (!string.IsNullOrEmpty(otlpEndpoint))
-                    {
-                        metrics.AddOtlpExporter(opts =>
-                        {
-                            opts.Endpoint = new Uri(otlpEndpoint);
-                            if (!string.IsNullOrEmpty(otlpHeaders)) opts.Headers = otlpHeaders;
-                        });
-                    }
+                    
+                    // Note: OTLP for metrics is disabled - using PrometheusRemoteWriteService instead
                 });
 
             if (enableTracing)

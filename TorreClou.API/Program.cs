@@ -4,48 +4,46 @@ using Serilog;
 using TorreClou.API.Extensions;
 using TorreClou.API.Filters;
 using TorreClou.Application.Extensions;
-using TorreClou.Infrastructure.Extensions; // Import Shared Extensions
+using TorreClou.Infrastructure.Extensions;
+using TorreClou.Infrastructure.Services;
 
 const string ServiceName = "torreclou-api";
 
-// Bootstrap Logger
-Log.Logger = new LoggerConfiguration().WriteTo.Console().CreateBootstrapLogger();
+// Bootstrap logger for startup errors only
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
 
 try
 {
-    Log.Information("Starting API");
     var builder = WebApplication.CreateBuilder(args);
 
-    // 1. Shared Serilog Setup
+    // Configure Serilog (replaces bootstrap logger)
     builder.Configuration.ConfigureSharedSerilog(ServiceName, builder.Environment.EnvironmentName);
-    builder.Host.UseSerilog(); // Clear default providers to avoid duplication
+    builder.Host.UseSerilog();
 
-    // 2. Shared Infrastructure (DB, Redis, Repos, OpenTelemetry)
+    Log.Information("Starting {ServiceName}", ServiceName);
+
+    // Infrastructure
     builder.Services.AddSharedDatabase(builder.Configuration);
     builder.Services.AddSharedRedis(builder.Configuration);
     builder.Services.AddTorreClouOpenTelemetry(ServiceName, builder.Configuration, builder.Environment, true);
-
-    // 3. Hangfire (Client Mode - No Server)
     builder.Services.AddSharedHangfireBase(builder.Configuration);
 
-    // 4. API Specifics
+    // Application Services
     builder.Services.AddApplicationServices();
     builder.Services.AddInfrastructureServices(builder.Configuration);
     builder.Services.AddApiServices(builder.Configuration);
     builder.Services.AddIdentityServices(builder.Configuration);
     builder.Services.AddHttpClient();
     
-    // Enable HTTP logging in development
-    if (builder.Environment.IsDevelopment())
-    {
-        builder.Services.AddHttpLogging(options =>
-        {
-            options.LoggingFields = Microsoft.AspNetCore.HttpLogging.HttpLoggingFields.All;
-        });
-    }
+    // Prometheus Remote Write to Grafana Cloud
+    builder.Services.AddHostedService<PrometheusRemoteWriteService>();
+
     // CORS
-    builder.Services.AddCors(options => {
-        options.AddPolicy("Development",policy =>
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("AllowAll", policy =>
         {
             policy.AllowAnyOrigin()
                   .AllowAnyMethod()
@@ -55,26 +53,21 @@ try
 
     var app = builder.Build();
 
-    // --- Middleware ---
-    if (app.Environment.IsDevelopment())
-    {
-        app.UseHttpLogging(); // Enable HTTP request logging in development (must be early in pipeline)
-    }
-    
+    // Middleware
     app.UseExceptionHandler();
-    app.UseHttpsRedirection();
-    
+    app.UseCors("AllowAll");
+
     if (app.Environment.IsDevelopment())
     {
         app.MapOpenApi();
         app.MapScalarApiReference();
-        app.UseCors("Development");
     }
     else
     {
-        app.UseCors("Production");
+        app.UseHttpsRedirection();
         app.UseHsts();
     }
+
     app.UseAuthentication();
     app.UseAuthorization();
 
@@ -86,7 +79,15 @@ try
 
     app.UseOpenTelemetryPrometheusScrapingEndpoint();
     app.MapControllers();
+
+    Log.Information("{ServiceName} started successfully", ServiceName);
     app.Run();
 }
-catch (Exception ex) { Log.Fatal(ex, "API terminated unexpectedly"); }
-finally { Log.CloseAndFlush(); }
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Application terminated unexpectedly");
+}
+finally
+{
+    Log.CloseAndFlush();
+}
