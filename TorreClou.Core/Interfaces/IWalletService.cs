@@ -1,6 +1,7 @@
 using TorreClou.Core.DTOs.Admin;
 using TorreClou.Core.DTOs.Common;
 using TorreClou.Core.DTOs.Financal;
+using TorreClou.Core.Enums;
 using TorreClou.Core.Shared;
 
 namespace TorreClou.Core.Interfaces
@@ -15,8 +16,11 @@ namespace TorreClou.Core.Interfaces
 
         Task<Result<int>> DeductBalanceAsync(int userId, decimal amount, string description);
 
-        // User: Get paginated transactions
-        Task<Result<PaginatedResult<WalletTransactionDto>>> GetUserTransactionsAsync(int userId, int pageNumber, int pageSize);
+        // User: Get paginated transactions with optional type filter
+        Task<Result<PaginatedResult<WalletTransactionDto>>> GetUserTransactionsAsync(int userId, int pageNumber, int pageSize, TransactionType? transactionType = null);
+
+        // User: Get available transaction type filters (only types that exist for the user)
+        Task<Result<List<TransactionTypeFilterDto>>> GetUserTransactionFiltersAsync(int userId);
 
         // User: Get single transaction by ID
         Task<Result<WalletTransactionDto>> GetTransactionByIdAsync(int userId, int transactionId);

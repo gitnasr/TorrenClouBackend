@@ -109,10 +109,11 @@ namespace TorreClou.Application.Services
         }
 
 
-        public async Task<Result<PaginatedResult<WalletTransactionDto>>> GetUserTransactionsAsync(int userId, int pageNumber, int pageSize)
+        public async Task<Result<PaginatedResult<WalletTransactionDto>>> GetUserTransactionsAsync(int userId, int pageNumber, int pageSize, TransactionType? transactionType = null)
         {
-            var spec = new UserTransactionsSpecification(userId, pageNumber, pageSize);
-            var countSpec = new BaseSpecification<WalletTransaction>(x => x.UserId == userId);
+            var spec = new UserTransactionsSpecification(userId, pageNumber, pageSize, transactionType);
+            var countSpec = new BaseSpecification<WalletTransaction>(x => 
+                x.UserId == userId && (transactionType == null || x.Type == transactionType.Value));
 
             var transactions = await unitOfWork.Repository<WalletTransaction>().ListAsync(spec);
             var totalCount = await unitOfWork.Repository<WalletTransaction>().CountAsync(countSpec);
@@ -134,6 +135,25 @@ namespace TorreClou.Application.Services
                 PageNumber = pageNumber,
                 PageSize = pageSize
             });
+        }
+
+        public async Task<Result<List<TransactionTypeFilterDto>>> GetUserTransactionFiltersAsync(int userId)
+        {
+            var spec = new BaseSpecification<WalletTransaction>(x => x.UserId == userId);
+            var transactions = await unitOfWork.Repository<WalletTransaction>().ListAsync(spec);
+
+            var filters = transactions
+                .GroupBy(t => t.Type)
+                .Select(g => new TransactionTypeFilterDto
+                {
+                    Type = g.Key,
+                    Count = g.Count()
+                })
+                .Where(f => f.Count > 0)
+                .OrderByDescending(f => f.Count)
+                .ToList();
+
+            return Result.Success(filters);
         }
 
         public async Task<Result<WalletTransactionDto>> GetTransactionByIdAsync(int userId, int transactionId)

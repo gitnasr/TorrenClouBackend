@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TorreClou.Core.DTOs.Financal;
+using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
 
@@ -24,13 +25,23 @@ namespace TorreClou.API.Controllers.Finance
         }
 
         [HttpGet("transactions")]
-        public async Task<IActionResult> GetTransactions([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 10)
+        public async Task<IActionResult> GetTransactions(
+            [FromQuery] int pageNumber = 1, 
+            [FromQuery] int pageSize = 10,
+            [FromQuery] TransactionType? transactionType = null)
         {
-            var result = await walletService.GetUserTransactionsAsync(UserId, pageNumber, pageSize);
+            var result = await walletService.GetUserTransactionsAsync(UserId, pageNumber, pageSize, transactionType);
             return HandleResult(result);
         }
 
-        [HttpGet("transactions/{id}")]
+        [HttpGet("transactions/filters")]
+        public async Task<IActionResult> GetTransactionFilters()
+        {
+            var result = await walletService.GetUserTransactionFiltersAsync(UserId);
+            return HandleResult(result);
+        }
+
+        [HttpGet("transactions/{id:int}")]
         public async Task<IActionResult> GetTransaction(int id)
         {
             var result = await walletService.GetTransactionByIdAsync(UserId, id);
