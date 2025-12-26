@@ -33,7 +33,7 @@ namespace TorreClou.Core.DTOs.Jobs
                                Status == JobStatus.TORRENT_DOWNLOAD_RETRY || 
                                Status == JobStatus.UPLOAD_RETRY;
         public bool CanRetry => !IsRefunded && Status.IsFailed() && Status != JobStatus.CANCELLED;
-        public bool CanCancel => Status.IsActive();
+        public bool CanCancel => Status.IsCancellable();
         public bool CanRefund => Status.IsFailed() && !IsRefunded;
 
         /// <summary>

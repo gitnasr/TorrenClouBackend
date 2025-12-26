@@ -570,6 +570,14 @@ namespace TorreClou.Application.Services
                 return Result<bool>.Failure("JOB_ALREADY_CANCELLED", "Job is already cancelled.");
             }
 
+            // Prevent cancellation during upload phase
+            if (IsUploadPhase(job.Status))
+            {
+                logger.LogWarning("Attempt to cancel job during upload phase | JobId: {JobId} | Status: {Status} | UserId: {UserId}", job.Id, job.Status, userId);
+                return Result<bool>.Failure("JOB_IN_UPLOAD_PHASE",
+                    "Cannot cancel a job during upload phase. Please wait for the upload to complete.");
+            }
+
             if (!job.Status.IsActive() && !job.Status.IsFailed())
             {
                 logger.LogWarning("Attempt to cancel non-cancellable job | JobId: {JobId} | Status: {Status} | UserId: {UserId}", job.Id, job.Status, userId);
