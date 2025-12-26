@@ -91,8 +91,7 @@ namespace TorreClou.Application.Services
                 var redisKey = $"{RedisKeyPrefix}{state}";
                 
                 OAuthState? storedState;
-                try
-                {
+              
                     // Atomic get-and-delete operation
                     var stateJson = await redisCache.GetAndDeleteAsync(redisKey);
                     
@@ -113,12 +112,7 @@ namespace TorreClou.Application.Services
                     {
                         return Result<int>.Failure("INVALID_STATE", "Expired OAuth state");
                     }
-                }
-                catch (Exception redisEx)
-                {
-                    logger.LogError(redisEx, "Failed to retrieve OAuth state from Redis");
-                    return Result<int>.Failure("REDIS_ERROR", "Failed to validate OAuth state");
-                }
+              
 
                 // Extract userId and profileName from validated state
                 var userId = storedState.UserId;
@@ -134,7 +128,7 @@ namespace TorreClou.Application.Services
                 // Validate that refresh token is present (critical for long-running jobs)
                 if (string.IsNullOrEmpty(tokenResponse.RefreshToken))
                 {
-                    logger.LogWarning("OAuth token exchange succeeded but no refresh token received for user {UserId}. This may cause authentication issues for long-running jobs.", userId);
+                    logger.LogCritical("OAuth token exchange succeeded but no refresh token received for user {UserId}. This may cause authentication issues for long-running jobs.", userId);
                     // Note: Google only returns refresh token on first authorization or when prompt=consent is used
                     // We already have prompt=consent in the auth URL, so this should not happen
                 }

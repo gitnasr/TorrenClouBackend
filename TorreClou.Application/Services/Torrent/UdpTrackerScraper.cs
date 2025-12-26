@@ -1,41 +1,103 @@
+using System;
 using System.Buffers.Binary;
-using System.Net.Sockets;
 using System.Net;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Linq;
+
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.DTOs.Torrents;
 using TorreClou.Core.Entities.Torrents;
 
 namespace TorreClou.Application.Services.Torrent
 {
-
     public class UdpTrackerScraper : ITrackerScraper
     {
         private const long PROTOCOL_ID = 0x41727101980;
+
         private readonly TimeSpan _timeout = TimeSpan.FromSeconds(5);
+
+        private const int MaxConcurrentTrackers = 25;
 
         public async Task<ScrapeAggregationResult> GetScrapeResultsAsync(string infoHash, IEnumerable<string> trackers)
         {
-            var hashBytes = StringToByteArray(infoHash);
+            if (trackers == null) throw new ArgumentNullException(nameof(trackers));
+
+            // Parse info hash (must be 20 bytes)
+            var hashBytes = TryParseInfoHash(infoHash);
+            if (hashBytes == null)
+            {
+                // invalid hash => no scrape
+                return new ScrapeAggregationResult
+                {
+                    Seeders = 0,
+                    Leechers = 0,
+                    Completed = 0,
+                    TrackersSuccess = 0,
+                    TrackersTotal = 0
+                };
+            }
 
             var trackerList = trackers
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Select(t => t.Trim())
                 .Where(t => t.StartsWith("udp://", StringComparison.OrdinalIgnoreCase))
-                .Distinct()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var tasks = trackerList.Select(t => ScrapeSingleTrackerAsync(t, hashBytes));
+            if (trackerList.Count == 0)
+            {
+                return new ScrapeAggregationResult
+                {
+                    Seeders = 0,
+                    Leechers = 0,
+                    Completed = 0,
+                    TrackersSuccess = 0,
+                    TrackersTotal = 0
+                };
+            }
+
+            using var throttler = new SemaphoreSlim(MaxConcurrentTrackers);
+
+            var tasks = trackerList.Select(async t =>
+            {
+                await throttler.WaitAsync();
+                try
+                {
+                    return await ScrapeSingleTrackerAsync(t, hashBytes);
+                }
+                finally
+                {
+                    throttler.Release();
+                }
+            });
 
             var results = await Task.WhenAll(tasks);
 
-            int totalSeeders = 0;
-            int totalLeechers = 0;
-            int totalCompleted = 0;
-
-            int successCount = results.Count(r => r.Sucess);
+            // NOTE: your ScrapeResult uses .Sucess (typo). If it is .Success, change it here.
             int trackerCount = results.Length;
+            int successCount = results.Count(r => r.Sucess); // <-- change to r.Success if needed
 
-            totalSeeders = results.Max(r => r.Seeders);
-            totalLeechers = results.Max(r => r.Leechers);
-            totalCompleted = results.Max(r => r.Completed);
+            var successful = results.Where(r => r.Sucess).ToArray(); // <-- change to r.Success if needed
+
+            if (successful.Length == 0)
+            {
+                return new ScrapeAggregationResult
+                {
+                    Seeders = 0,
+                    Leechers = 0,
+                    Completed = 0,
+                    TrackersSuccess = 0,
+                    TrackersTotal = trackerCount
+                };
+            }
+
+            // Keep your approach: take Max across successful trackers (often closer to "real" swarm)
+            int totalSeeders = successful.Max(r => r.Seeders);
+            int totalLeechers = successful.Max(r => r.Leechers);
+            int totalCompleted = successful.Max(r => r.Completed);
 
             return new ScrapeAggregationResult
             {
@@ -47,7 +109,6 @@ namespace TorreClou.Application.Services.Torrent
             };
         }
 
-
         private async Task<ScrapeResult> ScrapeSingleTrackerAsync(string trackerUrl, byte[] infoHash)
         {
             using var udpClient = new UdpClient();
@@ -55,58 +116,72 @@ namespace TorreClou.Application.Services.Torrent
             try
             {
                 var uri = new Uri(trackerUrl);
+
+                // Resolve host
                 var ipAddresses = await Dns.GetHostAddressesAsync(uri.Host);
-                var ip = ipAddresses.FirstOrDefault(i => i.AddressFamily == AddressFamily.InterNetwork);
+
+                // Prefer IPv4, then IPv6 (but support both)
+                var ip =
+                    ipAddresses.FirstOrDefault(i => i.AddressFamily == AddressFamily.InterNetwork) ??
+                    ipAddresses.FirstOrDefault(i => i.AddressFamily == AddressFamily.InterNetworkV6);
 
                 if (ip == null)
                     return new ScrapeResult(0, 0, 0, false);
 
                 udpClient.Connect(ip, uri.Port);
 
-                var transactionId = Random.Shared.Next();
+                // --------------------
+                // CONNECT
+                // --------------------
+                int connectTransactionId = Random.Shared.Next();
 
-                // ---- CONNECT ----
                 var connectReq = new byte[16];
-                BinaryPrimitives.WriteInt64BigEndian(connectReq, PROTOCOL_ID);
-                BinaryPrimitives.WriteInt32BigEndian(connectReq.AsSpan(8), 0);
-                BinaryPrimitives.WriteInt32BigEndian(connectReq.AsSpan(12), transactionId);
+                BinaryPrimitives.WriteInt64BigEndian(connectReq.AsSpan(0, 8), PROTOCOL_ID);
+                BinaryPrimitives.WriteInt32BigEndian(connectReq.AsSpan(8, 4), 0); // action = connect
+                BinaryPrimitives.WriteInt32BigEndian(connectReq.AsSpan(12, 4), connectTransactionId);
 
                 await udpClient.SendAsync(connectReq);
-                var connectRes = (await ReceiveWithTimeout(udpClient)).Buffer;
 
+                var connectRes = (await ReceiveWithTimeout(udpClient)).Buffer;
                 if (connectRes.Length < 16)
                     return new ScrapeResult(0, 0, 0, false);
 
-                var action = BinaryPrimitives.ReadInt32BigEndian(connectRes.AsSpan(0));
-                var transIdRes = BinaryPrimitives.ReadInt32BigEndian(connectRes.AsSpan(4));
-                if (action != 0 || transIdRes != transactionId)
+                var action = BinaryPrimitives.ReadInt32BigEndian(connectRes.AsSpan(0, 4));
+                var transIdRes = BinaryPrimitives.ReadInt32BigEndian(connectRes.AsSpan(4, 4));
+
+                if (action != 0 || transIdRes != connectTransactionId)
                     return new ScrapeResult(0, 0, 0, false);
 
-                var connectionId = BinaryPrimitives.ReadInt64BigEndian(connectRes.AsSpan(8));
+                var connectionId = BinaryPrimitives.ReadInt64BigEndian(connectRes.AsSpan(8, 8));
 
-                // ---- SCRAPE ----
+                // --------------------
+                // SCRAPE
+                // --------------------
+                int scrapeTransactionId = Random.Shared.Next();
+
                 var scrapeReq = new byte[36];
-                BinaryPrimitives.WriteInt64BigEndian(scrapeReq, connectionId);
-                BinaryPrimitives.WriteInt32BigEndian(scrapeReq.AsSpan(8), 2);
-                BinaryPrimitives.WriteInt32BigEndian(scrapeReq.AsSpan(12), transactionId);
+                BinaryPrimitives.WriteInt64BigEndian(scrapeReq.AsSpan(0, 8), connectionId);
+                BinaryPrimitives.WriteInt32BigEndian(scrapeReq.AsSpan(8, 4), 2); // action = scrape
+                BinaryPrimitives.WriteInt32BigEndian(scrapeReq.AsSpan(12, 4), scrapeTransactionId);
+
+                // infohash 20 bytes at offset 16
                 Buffer.BlockCopy(infoHash, 0, scrapeReq, 16, 20);
 
                 await udpClient.SendAsync(scrapeReq);
 
                 var scrapeRes = (await ReceiveWithTimeout(udpClient)).Buffer;
-
                 if (scrapeRes.Length < 20)
                     return new ScrapeResult(0, 0, 0, false);
 
-                var action2 = BinaryPrimitives.ReadInt32BigEndian(scrapeRes.AsSpan(0));
-                var transId2 = BinaryPrimitives.ReadInt32BigEndian(scrapeRes.AsSpan(4));
+                var action2 = BinaryPrimitives.ReadInt32BigEndian(scrapeRes.AsSpan(0, 4));
+                var transId2 = BinaryPrimitives.ReadInt32BigEndian(scrapeRes.AsSpan(4, 4));
 
-                if (action2 != 2 || transId2 != transactionId)
+                if (action2 != 2 || transId2 != scrapeTransactionId)
                     return new ScrapeResult(0, 0, 0, false);
 
-                var seeders = BinaryPrimitives.ReadInt32BigEndian(scrapeRes.AsSpan(8));
-                var completed = BinaryPrimitives.ReadInt32BigEndian(scrapeRes.AsSpan(12));
-                var leechers = BinaryPrimitives.ReadInt32BigEndian(scrapeRes.AsSpan(16));
+                var seeders = BinaryPrimitives.ReadInt32BigEndian(scrapeRes.AsSpan(8, 4));
+                var completed = BinaryPrimitives.ReadInt32BigEndian(scrapeRes.AsSpan(12, 4));
+                var leechers = BinaryPrimitives.ReadInt32BigEndian(scrapeRes.AsSpan(16, 4));
 
                 return new ScrapeResult(
                     Math.Max(0, seeders),
@@ -120,7 +195,6 @@ namespace TorreClou.Application.Services.Torrent
                 return new ScrapeResult(0, 0, 0, false);
             }
         }
-
 
         private async Task<(byte[] Buffer, IPEndPoint RemoteEndPoint)> ReceiveWithTimeout(UdpClient client)
         {
@@ -136,17 +210,25 @@ namespace TorreClou.Application.Services.Torrent
             return (result.Buffer, result.RemoteEndPoint);
         }
 
-        private static byte[] StringToByteArray(string hex)
+        private static byte[]? TryParseInfoHash(string infoHash)
         {
-            if (string.IsNullOrWhiteSpace(hex))
-                return Array.Empty<byte>();
+            if (string.IsNullOrWhiteSpace(infoHash))
+                return null;
 
-            hex = hex.Trim();
+            infoHash = infoHash.Trim();
 
-            return Enumerable.Range(0, hex.Length)
-                             .Where(x => x % 2 == 0)
-                             .Select(x => Convert.ToByte(hex.Substring(x, 2), 16))
-                             .ToArray();
+            if (infoHash.Length != 40)
+                return null;
+
+            try
+            {
+                var bytes = Convert.FromHexString(infoHash);
+                return bytes.Length == 20 ? bytes : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 }

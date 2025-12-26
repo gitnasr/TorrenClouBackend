@@ -47,11 +47,7 @@ namespace TorreClou.Application.Services.Torrent
                 return Result<QuoteResponseDto>.Failure("USER_NOT_FOUND", "User not found.");
 
 
-            // 5. Persist Torrent File (Optimized)
-            // Ensure stream is ready for reading
-            if (torrentFile.CanSeek) torrentFile.Position = 0;
-
-      
+           
 
             var torrentStoredResult = await torrentService.FindOrCreateTorrentFile(torrentInfo,userId, torrentFile);
 

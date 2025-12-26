@@ -282,7 +282,6 @@ namespace TorreClou.Application.Services.Billing
                 ExpiresAt = DateTime.UtcNow.AddMinutes(30),
                 VoucherId = voucher?.Id,
                 TorrentFileId = torrentFile.Id,
-                TorrentFile = null // Explicitly set to null to prevent EF Core from trying to insert a new RequestedFile
             };
 
             unitOfWork.Repository<Invoice>().Add(invoice);

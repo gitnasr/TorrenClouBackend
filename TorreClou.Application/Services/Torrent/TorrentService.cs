@@ -27,11 +27,8 @@ namespace TorreClou.Application.Services.Torrent
             "udp://tracker.qu.ax:6969/announce",
             "udp://tracker.dler.org:6969/announce",
             "udp://tracker.0x7c0.com:6969/announce",
-
             "udp://tracker-udp.gbitt.info:80/announce",
-
             "udp://run.publictracker.xyz:6969/announce",
-
             "udp://retracker01-msk-virt.corbina.net:80/announce",
 
             "udp://p4p.arenabg.com:1337/announce",

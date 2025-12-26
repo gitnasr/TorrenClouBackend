@@ -56,7 +56,6 @@ namespace TorreClou.Application.Services
             return Result.Success(transactions.Sum(x => x.Amount));
         }
 
-        // Renamed from DetuctBalanceAync to Fix Typo
         public async Task<Result<int>> DeductBalanceAsync(int userId, decimal amount, string description)
         {
             if (amount <= 0)

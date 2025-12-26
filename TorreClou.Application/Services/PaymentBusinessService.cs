@@ -220,7 +220,6 @@ namespace TorreClou.Application.Services
             var deposits = await unitOfWork.Repository<Deposit>().ListAsync(depositSpec); // Loads only this month's deposits
 
             // 2. Wallet Stats (Optimization)
-            // NOTE: Ideally, replace this with a direct SQL query or specific repository method
             var allTransactions = await unitOfWork.Repository<WalletTransaction>().ListAllAsync();
 
             var dashboard = new AdminDashboardDto

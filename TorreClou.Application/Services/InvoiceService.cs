@@ -84,14 +84,9 @@ namespace TorreClou.Application.Services
             PricingSnapshot? pricingDetails = null;
             if (!string.IsNullOrEmpty(invoice.PricingSnapshotJson) && invoice.PricingSnapshotJson != "{}")
             {
-                try
-                {
+              
                     pricingDetails = JsonSerializer.Deserialize<PricingSnapshot>(invoice.PricingSnapshotJson);
-                }
-                catch
-                {
-                    // If deserialization fails, pricingDetails remains null
-                }
+               
             }
 
             // Calculate pricing breakdown from snapshot
