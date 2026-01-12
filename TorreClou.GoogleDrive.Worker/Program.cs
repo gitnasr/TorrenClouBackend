@@ -53,6 +53,12 @@ try
     builder.Services.AddHostedService<JobHealthMonitor<UserJob>>();
     builder.Services.AddHostedService<GoogleDriveWorker>();
 
+    // Configure host shutdown timeout to allow Hangfire graceful shutdown
+    builder.Services.Configure<HostOptions>(opts => 
+    {
+        opts.ShutdownTimeout = TimeSpan.FromMinutes(6); // Longer than Hangfire's ServerTimeout
+    });
+
     var host = builder.Build();
     
     Log.Information("{ServiceName} started successfully", ServiceName);

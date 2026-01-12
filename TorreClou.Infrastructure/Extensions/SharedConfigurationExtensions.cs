@@ -194,7 +194,7 @@ namespace TorreClou.Infrastructure.Extensions
             services.AddHangfireServer(options =>
             {
                 options.WorkerCount = 100;
-                options.ServerTimeout = TimeSpan.FromMinutes(5);
+                options.ServerTimeout = TimeSpan.FromMinutes(2); // Reduced from 5 minutes
                 options.HeartbeatInterval = TimeSpan.FromSeconds(30);
                 options.SchedulePollingInterval = TimeSpan.FromSeconds(10);
                 options.Queues = queues;

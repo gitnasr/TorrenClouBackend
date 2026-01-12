@@ -1,4 +1,5 @@
 using Hangfire;
+using Microsoft.Extensions.Hosting;
 using Serilog;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Interfaces;
@@ -53,6 +54,12 @@ try
     builder.Services.Configure<JobHealthMonitorOptions>(opts => opts.CheckInterval = TimeSpan.FromMinutes(2));
     builder.Services.AddHostedService<JobHealthMonitor<UserJob>>();
     builder.Services.AddHostedService<TorrentWorker>();
+
+    // Configure host shutdown timeout to allow Hangfire graceful shutdown
+    builder.Services.Configure<HostOptions>(opts => 
+    {
+        opts.ShutdownTimeout = TimeSpan.FromMinutes(6); // Longer than Hangfire's ServerTimeout
+    });
 
     var host = builder.Build();
     

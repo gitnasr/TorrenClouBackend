@@ -1,4 +1,5 @@
 using Hangfire;
+using Microsoft.Extensions.Hosting;
 using Serilog;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Interfaces.Hangfire;
@@ -54,6 +55,12 @@ try
     });
     builder.Services.AddHostedService<SyncRecoveryService>();
     builder.Services.AddHostedService<SyncWorker>();
+
+    // Configure host shutdown timeout to allow Hangfire graceful shutdown
+    builder.Services.Configure<HostOptions>(opts => 
+    {
+        opts.ShutdownTimeout = TimeSpan.FromMinutes(6); // Longer than Hangfire's ServerTimeout
+    });
 
     var host = builder.Build();
     
