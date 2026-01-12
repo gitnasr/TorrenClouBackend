@@ -210,7 +210,7 @@ namespace TorreClou.Infrastructure.Extensions
         {
             services.AddHangfireServer(options =>
             {
-                options.WorkerCount = 10; // Reduced from 100 to reduce Redis connection contention
+                options.WorkerCount = 50; // Reduced from 100 to reduce Redis connection contention
                 options.ServerTimeout = TimeSpan.FromMinutes(2); // Reduced from 5 minutes
                 options.HeartbeatInterval = TimeSpan.FromSeconds(30);
                 options.SchedulePollingInterval = TimeSpan.FromSeconds(10);
