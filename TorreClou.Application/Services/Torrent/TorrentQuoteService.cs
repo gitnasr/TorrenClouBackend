@@ -137,14 +137,56 @@ namespace TorreClou.Application.Services.Torrent
                 return Result.Success(torrentInfo.TotalSize);
             }
 
+            var selectedSet = new HashSet<string>(selectedFIlePathes);
             long targetSize = torrentInfo.Files
-                .Where(f => selectedFIlePathes.Contains(f.Path))
+                .Where(f => IsFileSelected(f.Path, selectedSet))
                 .Sum(f => f.Size);
 
             if (targetSize == 0)
                 return Result.Failure<long>("Selected files resulted in 0 bytes size.");
 
             return Result.Success(targetSize);
+        }
+
+        /// <summary>
+        /// Checks if a file path should be included based on selected paths.
+        /// Handles both direct file selections (exact match) and folder selections (path starts with folder + "/").
+        /// </summary>
+        /// <param name="filePath">The file path to check (from MonoTorrent, uses forward slashes)</param>
+        /// <param name="selectedPaths">Set of selected file/folder paths</param>
+        /// <returns>True if the file should be included, false otherwise</returns>
+        private static bool IsFileSelected(string filePath, HashSet<string> selectedPaths)
+        {
+            if (string.IsNullOrEmpty(filePath) || selectedPaths == null || selectedPaths.Count == 0)
+                return false;
+
+            // Normalize file path to use forward slashes (MonoTorrent standard)
+            var normalizedFilePath = filePath.Replace('\\', '/');
+
+            // Check for exact match first (direct file selection)
+            if (selectedPaths.Contains(normalizedFilePath))
+                return true;
+
+            // Check if file is inside any selected folder
+            foreach (var selectedPath in selectedPaths)
+            {
+                if (string.IsNullOrEmpty(selectedPath))
+                    continue;
+
+                // Normalize selected path to use forward slashes
+                var normalizedSelectedPath = selectedPath.Replace('\\', '/').TrimEnd('/');
+
+                // Skip if selected path is empty after normalization
+                if (string.IsNullOrEmpty(normalizedSelectedPath))
+                    continue;
+
+                // Check if file path starts with folder path + "/"
+                // This handles folder selections like "Screens" matching "Screens/file.jpg"
+                if (normalizedFilePath.StartsWith(normalizedSelectedPath + "/", StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
         }
     }
 }

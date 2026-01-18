@@ -72,8 +72,9 @@ namespace TorreClou.Worker.Services
                     await MarkJobFailedAsync(job, "Failed to download or parse torrent file");
                     return;
                 }
+                var selectedSet = new HashSet<string>(job.SelectedFilePaths);
                 var downloadableSize = torrent.Files
-                    .Where(file => job.SelectedFilePaths.Contains(file.Path))
+                    .Where(file => IsFileSelected(file.Path, selectedSet))
                     .Sum(file => file.Length);
                 
                 job.StartedAt ??= DateTime.UtcNow;
@@ -92,11 +93,10 @@ namespace TorreClou.Worker.Services
                 _engine = CreateEngine(downloadPath);
                 manager = await _engine.AddAsync(torrent, downloadPath);
                 var progress = manager.Progress;
-                var selectedSet = new HashSet<string>(job.SelectedFilePaths);
                 foreach (var file in manager.Files)
                 {
-                    // Check if the file's path exists in your selected list
-                    if (selectedSet.Contains(file.Path))
+                    // Check if the file's path should be included (handles both direct file and folder selections)
+                    if (IsFileSelected(file.Path, selectedSet))
                     {
                         await manager.SetFilePriorityAsync(file, Priority.Normal);
                         Logger.LogInformation(
@@ -105,14 +105,11 @@ namespace TorreClou.Worker.Services
                     }
                     else
                     {
-
                         // Set to DoNotDownload for unselected files
-
-                      await  manager.SetFilePriorityAsync(file, Priority.DoNotDownload);
+                        await manager.SetFilePriorityAsync(file, Priority.DoNotDownload);
                         Logger.LogInformation(
                             "{LogPrefix} Skipped file from download as per user request | JobId: {JobId} | FilePath: {FilePath} | SizeMB: {SizeMB:F2} MB",
                             LogPrefix, job.Id, file.Path, file.Length / (1024.0 * 1024.0));
-
                     }
                 }
 
@@ -445,6 +442,47 @@ namespace TorreClou.Worker.Services
         {
             var providerName = providerType.ToString().ToLowerInvariant();
             return $"uploads:{providerName}:stream";
+        }
+
+        /// <summary>
+        /// Checks if a file path should be included based on selected paths.
+        /// Handles both direct file selections (exact match) and folder selections (path starts with folder + "/").
+        /// </summary>
+        /// <param name="filePath">The file path to check (from MonoTorrent, uses forward slashes)</param>
+        /// <param name="selectedPaths">Set of selected file/folder paths</param>
+        /// <returns>True if the file should be included, false otherwise</returns>
+        private static bool IsFileSelected(string filePath, HashSet<string> selectedPaths)
+        {
+            if (string.IsNullOrEmpty(filePath) || selectedPaths == null || selectedPaths.Count == 0)
+                return false;
+
+            // Normalize file path to use forward slashes (MonoTorrent standard)
+            var normalizedFilePath = filePath.Replace('\\', '/');
+
+            // Check for exact match first (direct file selection)
+            if (selectedPaths.Contains(normalizedFilePath))
+                return true;
+
+            // Check if file is inside any selected folder
+            foreach (var selectedPath in selectedPaths)
+            {
+                if (string.IsNullOrEmpty(selectedPath))
+                    continue;
+
+                // Normalize selected path to use forward slashes
+                var normalizedSelectedPath = selectedPath.Replace('\\', '/').TrimEnd('/');
+
+                // Skip if selected path is empty after normalization
+                if (string.IsNullOrEmpty(normalizedSelectedPath))
+                    continue;
+
+                // Check if file path starts with folder path + "/"
+                // This handles folder selections like "Screens" matching "Screens/file.jpg"
+                if (normalizedFilePath.StartsWith(normalizedSelectedPath + "/", StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
         }
     }
 }
