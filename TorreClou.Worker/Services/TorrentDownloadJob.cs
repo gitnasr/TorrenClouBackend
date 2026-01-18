@@ -72,8 +72,9 @@ namespace TorreClou.Worker.Services
                     await MarkJobFailedAsync(job, "Failed to download or parse torrent file");
                     return;
                 }
+                var selectedSet = new HashSet<string>(job.SelectedFilePaths);
                 var downloadableSize = torrent.Files
-                    .Where(file => job.SelectedFilePaths.Contains(file.Path))
+                    .Where(file => IsFileSelected(file.Path, selectedSet))
                     .Sum(file => file.Length);
                 
                 job.StartedAt ??= DateTime.UtcNow;
@@ -92,11 +93,10 @@ namespace TorreClou.Worker.Services
                 _engine = CreateEngine(downloadPath);
                 manager = await _engine.AddAsync(torrent, downloadPath);
                 var progress = manager.Progress;
-                var selectedSet = new HashSet<string>(job.SelectedFilePaths);
                 foreach (var file in manager.Files)
                 {
-                    // Check if the file's path exists in your selected list
-                    if (selectedSet.Contains(file.Path))
+                    // Check if the file's path matches any selected path (exact match or inside selected folder)
+                    if (IsFileSelected(file.Path, selectedSet))
                     {
                         await manager.SetFilePriorityAsync(file, Priority.Normal);
                         Logger.LogInformation(
@@ -445,6 +445,32 @@ namespace TorreClou.Worker.Services
         {
             var providerName = providerType.ToString().ToLowerInvariant();
             return $"uploads:{providerName}:stream";
+        }
+
+        /// <summary>
+        /// Checks if a file should be selected for download.
+        /// Returns true if the file path exactly matches any selected path,
+        /// or if the file is inside a selected folder.
+        /// </summary>
+        private static bool IsFileSelected(string filePath, HashSet<string> selectedPaths)
+        {
+            // Normalize path separators for cross-platform compatibility
+            var normalizedFile = filePath.Replace('\\', '/');
+
+            foreach (var selectedPath in selectedPaths)
+            {
+                var normalizedSelected = selectedPath.Replace('\\', '/');
+
+                // Exact match (file directly selected)
+                if (string.Equals(normalizedFile, normalizedSelected, StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+                // Check if file is inside a selected folder (folder path + separator)
+                if (normalizedFile.StartsWith(normalizedSelected + "/", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
         }
     }
 }

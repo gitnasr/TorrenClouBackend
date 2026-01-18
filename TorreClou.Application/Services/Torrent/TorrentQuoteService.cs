@@ -127,24 +127,50 @@ namespace TorreClou.Application.Services.Torrent
             return Result<Stream>.Success(torrentFile);
         }
 
-        private Result<long> CalculateStorage(List<string> selectedFIlePathes, TorrentInfoDto torrentInfo)
+        private Result<long> CalculateStorage(List<string> selectedFilePaths, TorrentInfoDto torrentInfo)
         {
             if (torrentInfo.TotalSize == 0)
                 return Result.Failure<long>("Torrent total size is zero.");
 
-            if (selectedFIlePathes == null )
+            if (selectedFilePaths == null )
             {
                 return Result.Success(torrentInfo.TotalSize);
             }
 
             long targetSize = torrentInfo.Files
-                .Where(f => selectedFIlePathes.Contains(f.Path))
+                .Where(f => IsFileSelected(f.Path, selectedFilePaths))
                 .Sum(f => f.Size);
 
             if (targetSize == 0)
                 return Result.Failure<long>("Selected files resulted in 0 bytes size.");
 
             return Result.Success(targetSize);
+        }
+
+        /// <summary>
+        /// Checks if a file should be selected based on the selected paths.
+        /// Returns true if the file path exactly matches any selected path,
+        /// or if the file is inside a selected folder.
+        /// </summary>
+        private static bool IsFileSelected(string filePath, List<string> selectedPaths)
+        {
+            // Normalize path separators for cross-platform compatibility
+            var normalizedFile = filePath.Replace('\\', '/');
+
+            foreach (var selectedPath in selectedPaths)
+            {
+                var normalizedSelected = selectedPath.Replace('\\', '/');
+
+                // Exact match (file directly selected)
+                if (string.Equals(normalizedFile, normalizedSelected, StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+                // Check if file is inside a selected folder (folder path + separator)
+                if (normalizedFile.StartsWith(normalizedSelected + "/", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
         }
     }
 }
