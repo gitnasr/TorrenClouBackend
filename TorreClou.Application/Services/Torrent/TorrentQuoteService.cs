@@ -137,7 +137,10 @@ namespace TorreClou.Application.Services.Torrent
                 return Result.Success(torrentInfo.TotalSize);
             }
 
-            var selectedSet = new HashSet<string>(selectedFIlePathes);
+            // Normalize selected paths to forward slashes for comparison with MonoTorrent paths
+            var selectedSet = new HashSet<string>(
+                selectedFIlePathes.Select(p => p?.Replace('\\', '/') ?? string.Empty),
+                StringComparer.Ordinal);
             long targetSize = torrentInfo.Files
                 .Where(f => IsFileSelected(f.Path, selectedSet))
                 .Sum(f => f.Size);
@@ -153,7 +156,7 @@ namespace TorreClou.Application.Services.Torrent
         /// Handles both direct file selections (exact match) and folder selections (path starts with folder + "/").
         /// </summary>
         /// <param name="filePath">The file path to check (from MonoTorrent, uses forward slashes)</param>
-        /// <param name="selectedPaths">Set of selected file/folder paths</param>
+        /// <param name="selectedPaths">Set of selected file/folder paths (should already be normalized to forward slashes)</param>
         /// <returns>True if the file should be included, false otherwise</returns>
         private static bool IsFileSelected(string filePath, HashSet<string> selectedPaths)
         {
@@ -164,6 +167,7 @@ namespace TorreClou.Application.Services.Torrent
             var normalizedFilePath = filePath.Replace('\\', '/');
 
             // Check for exact match first (direct file selection)
+            // selectedPaths should already be normalized when HashSet is created
             if (selectedPaths.Contains(normalizedFilePath))
                 return true;
 
@@ -173,10 +177,10 @@ namespace TorreClou.Application.Services.Torrent
                 if (string.IsNullOrEmpty(selectedPath))
                     continue;
 
-                // Normalize selected path to use forward slashes
-                var normalizedSelectedPath = selectedPath.Replace('\\', '/').TrimEnd('/');
+                // selectedPath should already be normalized, but trim trailing slash for folder matching
+                var normalizedSelectedPath = selectedPath.TrimEnd('/');
 
-                // Skip if selected path is empty after normalization
+                // Skip if selected path is empty after trimming
                 if (string.IsNullOrEmpty(normalizedSelectedPath))
                     continue;
 
