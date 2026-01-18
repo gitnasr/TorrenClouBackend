@@ -45,7 +45,7 @@ docker run -d \
     -e BACKBLAZE_KEY_ID="$BACKBLAZE_KEY_ID" \
     -e BACKBLAZE_APP_KEY="$BACKBLAZE_APP_KEY" \
     -e BACKBLAZE_BUCKET="$BACKBLAZE_BUCKET" \
-    -v /mnt/torrents:/mnt/torrents \
+    -v /mnt/torrenclou:/mnt/torrents \
     --restart unless-stopped \
     $IMAGE_NAME
 
