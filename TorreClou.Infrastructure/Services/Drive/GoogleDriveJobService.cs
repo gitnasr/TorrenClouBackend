@@ -153,6 +153,66 @@ namespace TorreClou.Infrastructure.Services.Drive
             }
         }
 
+        public async Task<Result<string>> FindOrCreateFolderAsync(
+            string folderName, 
+            string? parentFolderId, 
+            string accessToken, 
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                // 1. Check if folder already exists in parent
+                var httpClient = httpClientFactory.CreateClient();
+                httpClient.Timeout = TimeSpan.FromMinutes(1);
+                httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+                // Build query: name='folderName' and mimeType='folder' and 'parentId' in parents and trashed=false
+                var escapedFolderName = folderName.Replace("'", "\\'");
+                var query = $"name='{escapedFolderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false";
+                
+                if (!string.IsNullOrEmpty(parentFolderId))
+                {
+                    query += $" and '{parentFolderId}' in parents";
+                }
+
+                var url = $"https://www.googleapis.com/drive/v3/files?q={Uri.EscapeDataString(query)}&fields=files(id,name)&pageSize=1";
+
+                var response = await httpClient.GetAsync(url, cancellationToken);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
+                    var fileListResponse = JsonSerializer.Deserialize<FileListResponse>(responseJson);
+
+                    if (fileListResponse?.Files != null && fileListResponse.Files.Length > 0)
+                    {
+                        var existingFolderId = fileListResponse.Files[0].Id;
+                        logger.LogDebug("Folder already exists | FolderName: {FolderName} | ParentId: {ParentId} | FolderId: {FolderId}",
+                            folderName, parentFolderId ?? "root", existingFolderId);
+                        return Result.Success(existingFolderId!);
+                    }
+                }
+                else
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                    logger.LogWarning("Failed to check folder existence: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                    // Continue to create folder even if check fails
+                }
+
+                // 2. Folder doesn't exist, create it
+                logger.LogDebug("Folder does not exist, creating | FolderName: {FolderName} | ParentId: {ParentId}",
+                    folderName, parentFolderId ?? "root");
+                
+                return await CreateFolderAsync(folderName, parentFolderId, accessToken, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Exception in FindOrCreateFolderAsync: {FolderName}", folderName);
+                // Fallback to creating the folder
+                return await CreateFolderAsync(folderName, parentFolderId, accessToken, cancellationToken);
+            }
+        }
+
         public async Task<Result<string>> UploadFileAsync(
             string filePath,
             string fileName,

@@ -29,8 +29,8 @@ RUN dotnet publish TorreClou.Sync.Worker.csproj -c Release --no-restore -o /app/
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app
 
-# Create mount point for block storage
-RUN mkdir -p /mnt/torrents
+# Create mount point for block storage and temp directories
+RUN mkdir -p /mnt/torrents /app/tmp /app/tmp/bundle /app/logs /app/data
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser
@@ -42,12 +42,22 @@ COPY --from=build /app/publish .
 COPY TorreClou.Sync.Worker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Set environment variables
+# === Environment Variables ===
 ENV ASPNETCORE_ENVIRONMENT=Production
+
+# === .NET Runtime Disk Safety (CRITICAL - Prevents root FS fill) ===
+ENV TMPDIR=/app/tmp
+ENV TEMP=/app/tmp
+ENV TMP=/app/tmp
+ENV DOTNET_BUNDLE_EXTRACT_BASE_DIR=/app/tmp/bundle
+ENV HOME=/app
+
+# === .NET Runtime Performance for long-lived workers ===
+ENV DOTNET_gcServer=1
+ENV DOTNET_EnableDiagnostics=0
 
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app /mnt/torrents
 
 # Set entry point
 ENTRYPOINT ["/entrypoint.sh"]
-

@@ -1,15 +1,30 @@
 #!/bin/bash
 # Script to run the TorreClou Google Drive Worker Docker container
+# This is a SELF-CONTAINED script - run only this file to start the worker
 # Usage: ./run-googledrive-worker.sh
 
 set -e
 
-# Configuration - Update these values as needed
+# ============================================
+# CONFIGURATION
+# ============================================
 IMAGE_NAME="torreclou-googledrive-worker"
 CONTAINER_NAME="googledrive-worker"
+EXTERNAL_STORAGE="/mnt/torrenclou"
+DOCKER_DATA_DIR="${EXTERNAL_STORAGE}/docker/${CONTAINER_NAME}"
+
+# Environment variables (use defaults or override from environment)
 BACKBLAZE_KEY_ID="${BACKBLAZE_KEY_ID:-0036961fa7da1a20000000007}"
 BACKBLAZE_APP_KEY="${BACKBLAZE_APP_KEY:-K003rx1yKtR0hARydpAqonh7pP8eJRE}"
 BACKBLAZE_BUCKET="${BACKBLAZE_BUCKET:-nasrika}"
+
+# Resource limits
+MEMORY_LIMIT="8g"
+MEMORY_RESERVATION="1g"
+
+# Log rotation
+LOG_MAX_SIZE="100m"
+LOG_MAX_FILE="3"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -17,7 +32,36 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}Starting TorreClou Google Drive Worker...${NC}"
+# ============================================
+# PRE-FLIGHT CHECKS
+# ============================================
+echo -e "${GREEN}=== TorreClou Google Drive Worker Startup ===${NC}"
+
+# Check external storage is mounted
+if [ ! -d "$EXTERNAL_STORAGE" ]; then
+    echo -e "${RED}ERROR: External storage not found at $EXTERNAL_STORAGE${NC}"
+    echo -e "${RED}Please ensure the disk is mounted before running this script.${NC}"
+    exit 1
+fi
+
+# Create required directories on external storage (prevents root FS fill)
+echo -e "${YELLOW}Preparing directories on external storage...${NC}"
+mkdir -p "${DOCKER_DATA_DIR}/tmp"
+mkdir -p "${DOCKER_DATA_DIR}/logs"
+mkdir -p "${DOCKER_DATA_DIR}/data"
+chmod 755 "${DOCKER_DATA_DIR}/tmp" "${DOCKER_DATA_DIR}/logs" "${DOCKER_DATA_DIR}/data"
+
+# Clean stale temp files older than 1 day
+echo -e "${YELLOW}Cleaning stale temp files...${NC}"
+find "${DOCKER_DATA_DIR}/tmp" -type f -mtime +1 -delete 2>/dev/null || true
+find "${DOCKER_DATA_DIR}/tmp" -type d -empty -delete 2>/dev/null || true
+
+# Report disk usage
+echo -e "${GREEN}External storage usage: $(df -h $EXTERNAL_STORAGE | tail -1 | awk '{print $3 "/" $2 " (" $5 ")"})${NC}"
+
+# ============================================
+# CONTAINER MANAGEMENT
+# ============================================
 
 # Check if container already exists and is running
 if [ "$(docker ps -q -f name=$CONTAINER_NAME)" ]; then
@@ -35,22 +79,74 @@ if ! docker images | grep -q "^$IMAGE_NAME "; then
     docker build -f TorreClou.GoogleDrive.Worker/Dockerfile -t $IMAGE_NAME .
 fi
 
-# Run the container with FUSE mount capabilities
+# ============================================
+# RUN CONTAINER
+# ============================================
 echo -e "${GREEN}Starting container $CONTAINER_NAME with FUSE mount support...${NC}"
 docker run -d \
     --name $CONTAINER_NAME \
     --cap-add SYS_ADMIN \
     --device /dev/fuse \
     --security-opt apparmor=unconfined \
+    \
+    `# === Environment Variables ===` \
+    -e ASPNETCORE_ENVIRONMENT=Production \
     -e BACKBLAZE_KEY_ID="$BACKBLAZE_KEY_ID" \
     -e BACKBLAZE_APP_KEY="$BACKBLAZE_APP_KEY" \
     -e BACKBLAZE_BUCKET="$BACKBLAZE_BUCKET" \
-    -v /mnt/torrenclou:/mnt/torrents \
+    \
+    `# === .NET Runtime Disk Safety (CRITICAL) ===` \
+    -e TMPDIR=/app/tmp \
+    -e TEMP=/app/tmp \
+    -e TMP=/app/tmp \
+    -e DOTNET_BUNDLE_EXTRACT_BASE_DIR=/app/tmp/bundle \
+    -e HOME=/app \
+    \
+    `# === .NET Runtime Performance ===` \
+    -e DOTNET_gcServer=1 \
+    -e DOTNET_EnableDiagnostics=0 \
+    \
+    `# === Volume Mounts (External Storage - Prevents Root FS Fill) ===` \
+    -v "${EXTERNAL_STORAGE}:/mnt/torrents" \
+    -v "${DOCKER_DATA_DIR}/tmp:/app/tmp" \
+    -v "${DOCKER_DATA_DIR}/logs:/app/logs" \
+    -v "${DOCKER_DATA_DIR}/data:/app/data" \
+    \
+    `# === Resource Limits ===` \
+    --memory="$MEMORY_LIMIT" \
+    --memory-reservation="$MEMORY_RESERVATION" \
+    \
+    `# === Log Rotation ===` \
+    --log-driver json-file \
+    --log-opt max-size="$LOG_MAX_SIZE" \
+    --log-opt max-file="$LOG_MAX_FILE" \
+    \
+    `# === Health Check ===` \
+    --health-cmd="pgrep -f dotnet || exit 1" \
+    --health-interval=30s \
+    --health-timeout=10s \
+    --health-retries=3 \
+    --health-start-period=60s \
+    \
+    `# === Restart Policy ===` \
     --restart unless-stopped \
+    \
     $IMAGE_NAME
 
-echo -e "${GREEN}Container $CONTAINER_NAME started successfully!${NC}"
-echo -e "${GREEN}View logs with: docker logs -f $CONTAINER_NAME${NC}"
-echo -e "${GREEN}Stop container with: docker stop $CONTAINER_NAME${NC}"
+# ============================================
+# POST-START VERIFICATION
+# ============================================
+echo ""
+echo -e "${GREEN}=== Container $CONTAINER_NAME started successfully! ===${NC}"
+echo ""
+echo -e "${GREEN}Useful commands:${NC}"
+echo -e "  View logs:       docker logs -f $CONTAINER_NAME"
+echo -e "  Stop container:  docker stop $CONTAINER_NAME"
+echo -e "  Check health:    docker inspect --format='{{.State.Health.Status}}' $CONTAINER_NAME"
+echo -e "  Temp disk usage: du -sh ${DOCKER_DATA_DIR}/tmp"
+echo ""
+echo -e "${GREEN}Disk usage verification:${NC}"
+echo -e "  Root FS:         $(df -h / | tail -1 | awk '{print $3 "/" $2 " (" $5 ")"}')"
+echo -e "  External:        $(df -h $EXTERNAL_STORAGE | tail -1 | awk '{print $3 "/" $2 " (" $5 ")"}')"
+echo ""
 echo -e "${YELLOW}Note: If you see FUSE mount errors, ensure Docker has proper permissions.${NC}"
-

@@ -292,8 +292,8 @@ namespace TorreClou.GoogleDrive.Worker.Services
 
                 var parentId = map.TryGetValue(parentRel, out var pid) ? pid : rootId;
 
-                // Optimization: In production, check if folder exists first or catch 409 Conflict
-                var result = await googleDriveService.CreateFolderAsync(name, parentId, accessToken, token);
+                // Use FindOrCreateFolderAsync to check for existing folder before creating
+                var result = await googleDriveService.FindOrCreateFolderAsync(name, parentId, accessToken, token);
 
                 if (result.IsSuccess)
                     map[relPath] = result.Value;
