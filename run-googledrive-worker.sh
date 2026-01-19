@@ -45,16 +45,17 @@ if [ ! -d "$EXTERNAL_STORAGE" ]; then
 fi
 
 # Create required directories on external storage (prevents root FS fill)
-echo -e "${YELLOW}Preparing directories on external storage...${NC}"
-mkdir -p "${DOCKER_DATA_DIR}/tmp"
-mkdir -p "${DOCKER_DATA_DIR}/logs"
-mkdir -p "${DOCKER_DATA_DIR}/data"
-chmod 755 "${DOCKER_DATA_DIR}/tmp" "${DOCKER_DATA_DIR}/logs" "${DOCKER_DATA_DIR}/data"
+echo -e "${YELLOW}Preparing directories on external storage (requires sudo)...${NC}"
+sudo mkdir -p "${DOCKER_DATA_DIR}/tmp"
+sudo mkdir -p "${DOCKER_DATA_DIR}/logs"
+sudo mkdir -p "${DOCKER_DATA_DIR}/data"
+# Set to 777 to ensure the non-root container user (appuser) can write to these volumes
+sudo chmod 777 "${DOCKER_DATA_DIR}/tmp" "${DOCKER_DATA_DIR}/logs" "${DOCKER_DATA_DIR}/data"
 
 # Clean stale temp files older than 1 day
 echo -e "${YELLOW}Cleaning stale temp files...${NC}"
-find "${DOCKER_DATA_DIR}/tmp" -type f -mtime +1 -delete 2>/dev/null || true
-find "${DOCKER_DATA_DIR}/tmp" -type d -empty -delete 2>/dev/null || true
+sudo find "${DOCKER_DATA_DIR}/tmp" -type f -mtime +1 -delete 2>/dev/null || true
+sudo find "${DOCKER_DATA_DIR}/tmp" -type d -empty -delete 2>/dev/null || true
 
 # Report disk usage
 echo -e "${GREEN}External storage usage: $(df -h $EXTERNAL_STORAGE | tail -1 | awk '{print $3 "/" $2 " (" $5 ")"})${NC}"
