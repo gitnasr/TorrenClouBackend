@@ -72,9 +72,14 @@ namespace TorreClou.Worker.Services
                     await MarkJobFailedAsync(job, "Failed to download or parse torrent file");
                     return;
                 }
-                var selectedSet = new HashSet<string>(job.SelectedFilePaths);
+                
+                // If SelectedFilePaths is null, select all files; otherwise use the specified paths
+                var selectedSet = job.SelectedFilePaths != null 
+                    ? new HashSet<string>(job.SelectedFilePaths)
+                    : null;
+                    
                 var downloadableSize = torrent.Files
-                    .Where(file => IsFileSelected(file.Path, selectedSet))
+                    .Where(file => selectedSet == null || IsFileSelected(file.Path, selectedSet))
                     .Sum(file => file.Length);
                 
                 job.StartedAt ??= DateTime.UtcNow;
@@ -95,8 +100,8 @@ namespace TorreClou.Worker.Services
                 var progress = manager.Progress;
                 foreach (var file in manager.Files)
                 {
-                    // Check if the file's path matches any selected path (exact match or inside selected folder)
-                    if (IsFileSelected(file.Path, selectedSet))
+                    // If selectedSet is null, select all files; otherwise check if file matches selected paths
+                    if (selectedSet == null || IsFileSelected(file.Path, selectedSet))
                     {
                         await manager.SetFilePriorityAsync(file, Priority.Normal);
                         Logger.LogInformation(

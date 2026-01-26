@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: torrenclo_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-torrenclo}
+      POSTGRES_USER: ${POSTGRES_USER:-torrenclo_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-torrenclo_user}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis Cache & Job State
+  redis:
+    image: redis:7-alpine
+    container_name: torrenclo_redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Hangfire Dashboard & Background Jobs
+  api:
+    build:
+      context: .
+      dockerfile: TorreClou.API/Dockerfile
+    container_name: torrenclo_api
+    ports:
+      - "${API_PORT:-5000}:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB:-torrenclo};Username=${POSTGRES_USER:-torrenclo_user};Password=${POSTGRES_PASSWORD:-changeme}
+      - Redis__Configuration=redis:6379
+      - Hangfire__DashboardPath=/hangfire
+      - Hangfire__ServerName=api
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - downloads:/app/downloads
+    restart: unless-stopped
+
+  # Torrent Download Worker
+  torrent-worker:
+    build:
+      context: .
+      dockerfile: TorreClou.Worker/Dockerfile
+    container_name: torrenclo_torrent_worker
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB:-torrenclo};Username=${POSTGRES_USER:-torrenclo_user};Password=${POSTGRES_PASSWORD:-changeme}
+      - Redis__Configuration=redis:6379
+      - Hangfire__WorkerName=torrent-worker
+      - Hangfire__Queues=torrent,default
+      - MAX_CONCURRENT_JOBS=${MAX_CONCURRENT_JOBS:-3}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - downloads:/app/downloads
+    restart: unless-stopped
+
+  # Storage Upload Workers (GoogleDrive & S3)
+  storage-worker:
+    build:
+      context: .
+      dockerfile: TorreClou.Worker/Dockerfile
+    container_name: torrenclo_storage_worker
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB:-torrenclo};Username=${POSTGRES_USER:-torrenclo_user};Password=${POSTGRES_PASSWORD:-changeme}
+      - Redis__Configuration=redis:6379
+      - Hangfire__WorkerName=storage-worker
+      - Hangfire__Queues=googledrive,s3,default
+      - MAX_CONCURRENT_UPLOADS=${MAX_CONCURRENT_UPLOADS:-2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - downloads:/app/downloads
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  downloads:
+    driver: local

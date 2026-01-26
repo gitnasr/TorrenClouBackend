@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using TorreClou.Core.Entities;
-using TorreClou.Core.Entities.Financals;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Entities.Marketing;
 using TorreClou.Core.Entities.Torrents;
@@ -30,13 +29,10 @@ namespace TorreClou.Infrastructure.Data
         public DbSet<JobStatusHistory> JobStatusHistories { get; set; }
         public DbSet<SyncStatusHistory> SyncStatusHistories { get; set; }
 
-        // --- Financial & Marketing Entities ---
-        public DbSet<Invoice> Invoices { get; set; }
-        public DbSet<WalletTransaction> WalletTransactions { get; set; }
+  
         public DbSet<Voucher> Vouchers { get; set; } // Added
         public DbSet<UserVoucherUsage> UserVoucherUsages { get; set; } // Added
         public DbSet<FlashSale> FlashSales { get; set; } // Added
-        public DbSet<Deposit> Deposits { get; set; } // Added
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -48,10 +44,7 @@ namespace TorreClou.Infrastructure.Data
             // --- User Configuration ---
             builder.Entity<User>()
                 .HasIndex(u => u.Email).IsUnique();
-            builder.Entity<User>()
-                .Property(u => u.Role).HasConversion<string>();
-            builder.Entity<User>()
-                .Property(u => u.Region).HasConversion<string>();
+      
 
             // --- Storage Profile ---
             builder.Entity<UserStorageProfile>()
@@ -59,14 +52,7 @@ namespace TorreClou.Infrastructure.Data
             builder.Entity<UserStorageProfile>()
                 .Property(p => p.CredentialsJson).HasColumnType("jsonb");
 
-            // --- Wallet ---
-            builder.Entity<WalletTransaction>()
-                .Property(t => t.Type).HasConversion<string>();
-            builder.Entity<WalletTransaction>()
-                .HasOne(w => w.User)
-                .WithMany(u => u.WalletTransactions)
-                .HasForeignKey(w => w.UserId)
-                .OnDelete(DeleteBehavior.Cascade);
+      
 
             // --- Jobs ---
             builder.Entity<UserJob>()
@@ -127,9 +113,6 @@ namespace TorreClou.Infrastructure.Data
             builder.Entity<S3SyncProgress>()
                 .HasOne(p => p.Sync).WithMany(s => s.FileProgress).HasForeignKey(p => p.SyncId).OnDelete(DeleteBehavior.Cascade);
 
-            // --- Invoice ---
-            builder.Entity<Invoice>()
-                .Property(i => i.PricingSnapshotJson).HasColumnType("jsonb");
 
             // --- Vouchers & Marketing ---
             builder.Entity<Voucher>()
@@ -151,11 +134,6 @@ namespace TorreClou.Infrastructure.Data
             builder.Entity<UserStrike>()
                 .HasOne(s => s.User).WithMany(u => u.Strikes).HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
 
-            // --- Deposits ---
-            builder.Entity<Deposit>()
-                .Property(d => d.Status).HasConversion<string>();
-            builder.Entity<Deposit>()
-                .HasIndex(d => d.GatewayTransactionId);
 
             // --- Requested Files (Torrents) ---
             // Composite unique index: InfoHash + User = Unique Upload

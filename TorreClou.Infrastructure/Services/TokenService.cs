@@ -18,7 +18,6 @@ namespace TorreClou.Infrastructure.Services
                 new Claim(ClaimTypes.Email, user.Email),
                 new Claim(ClaimTypes.GivenName, user.FullName),
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()), // UserId
-                new Claim(ClaimTypes.Role, user.Role.ToString())
             };
 
             // 2. Key & Signature

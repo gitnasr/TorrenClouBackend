@@ -245,6 +245,80 @@ namespace TorreClou.Infrastructure.Services.S3
                 return Result.Success(false);
             }
         }
+
+        public async Task<Result<string>> UploadFileAsync(string filePath, string credentialsJson, CancellationToken cancellationToken = default)
+        {
+            IAmazonS3? tempClient = null;
+            try
+            {
+                string bucketName;
+                IAmazonS3 clientToUse;
+
+                // Check if we have user-provided credentials
+                if (!string.IsNullOrWhiteSpace(credentialsJson))
+                {
+                    // Parse credentials JSON
+                    var creds = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(credentialsJson);
+                    
+                    // Extract all required fields
+                    bucketName = creds.GetProperty("bucketName").GetString() ?? throw new Exception("Bucket name not found in credentials");
+                    var endpoint = creds.GetProperty("endpoint").GetString() ?? throw new Exception("Endpoint not found in credentials");
+                    var accessKey = creds.GetProperty("accessKey").GetString() ?? throw new Exception("Access key not found in credentials");
+                    var secretKey = creds.GetProperty("secretKey").GetString() ?? throw new Exception("Secret key not found in credentials");
+
+                    // Create temporary S3 client with user-provided credentials
+                    var config = new AmazonS3Config
+                    {
+                        ServiceURL = endpoint,
+                        ForcePathStyle = true
+                    };
+
+                    tempClient = new AmazonS3Client(accessKey, secretKey, config);
+                    clientToUse = tempClient;
+
+                    _logger.LogDebug("Using user-provided S3 credentials | Endpoint: {Endpoint} | Bucket: {Bucket}", 
+                        endpoint, bucketName);
+                }
+                else
+                {
+                    // Fall back to class-level _s3Client when no credentials provided
+                    bucketName = _settings.BucketName ?? throw new Exception("No bucket name configured");
+                    clientToUse = _s3Client;
+
+                    _logger.LogDebug("Using default S3 credentials | Bucket: {Bucket}", bucketName);
+                }
+
+                var fileName = Path.GetFileName(filePath);
+                var s3Key = $"uploads/{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid()}/{fileName}";
+
+                // Simple single-part upload for now (can be enhanced with multipart for large files)
+                using var fileStream = File.OpenRead(filePath);
+                var uploadRequest = new Amazon.S3.Model.PutObjectRequest
+                {
+                    BucketName = bucketName,
+                    Key = s3Key,
+                    InputStream = fileStream,
+                    ContentType = "application/octet-stream"
+                };
+
+                await clientToUse.PutObjectAsync(uploadRequest, cancellationToken);
+                
+                _logger.LogInformation("Uploaded file to S3 | Bucket: {Bucket} | Key: {Key} | Size: {Size}", 
+                    bucketName, s3Key, fileStream.Length);
+
+                return Result.Success(s3Key);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to upload file | Path: {Path}", filePath);
+                return Result<string>.Failure("UPLOAD_FAILED", $"Failed to upload file: {ex.Message}");
+            }
+            finally
+            {
+                // Dispose temporary client if created
+                tempClient?.Dispose();
+            }
+        }
     }
 }
 

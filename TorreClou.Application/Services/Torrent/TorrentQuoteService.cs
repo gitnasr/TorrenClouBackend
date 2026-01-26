@@ -10,20 +10,17 @@ namespace TorreClou.Application.Services.Torrent
     public class TorrentQuoteService(
         IUnitOfWork unitOfWork,
         ITorrentService torrentService,
-        IQuotePricingService quotePricingService,
-        IStorageProfilesService storageProfilesService,
-        IUserService userService
-        ) : ITorrentQuoteService 
+        IStorageProfilesService storageProfilesService) : ITorrentQuoteService 
     {
         public async Task<Result<QuoteResponseDto>> GenerateQuoteAsync(QuoteRequestDto request, int userId, Stream torrentFile)
         {
-            //0. Check even if the user has active storage profile
+            //0. Check if user has active storage profile
             var IsActiveStorageProfile = await storageProfilesService.ValidateActiveStorageProfileByUserId(userId, request.StorageProfileId);
 
             if (!IsActiveStorageProfile.IsSuccess)
                 return Result<QuoteResponseDto>.Failure(IsActiveStorageProfile.Error);
              
-            // 1. Validate & Parse Torrent
+           // 1. Validate & Parse Torrent
             var torrentFileValidated = ValidateTorrentFile(torrentFile, request.TorrentFile.FileName);
             if (!torrentFileValidated.IsSuccess)
                 return Result<QuoteResponseDto>.Failure(torrentFileValidated.Error);
@@ -41,77 +38,26 @@ namespace TorreClou.Application.Services.Torrent
 
             long totalSizeInBytes = totalSizeResult.Value;
 
-            // 3. Get User for Regional Pricing
-            var user = await userService.GetActiveUserById(userId);
-            if (user == null)
-                return Result<QuoteResponseDto>.Failure("USER_NOT_FOUND", "User not found.");
-
-
-           
-
-            var torrentStoredResult = await torrentService.FindOrCreateTorrentFile(torrentInfo,userId, torrentFile);
+            // 3. Store torrent file
+            // Reset stream position after it was consumed by GetTorrentInfoFromTorrentFileAsync
+            torrentFile.Position = 0;
+            var torrentStoredResult = await torrentService.FindOrCreateTorrentFile(torrentInfo, userId, torrentFile);
 
             if (torrentStoredResult.IsFailure)
                 return Result<QuoteResponseDto>.Failure("Failed to save torrent information.");
 
-            // 6. Generate or Reuse Invoice (Single Source of Truth for Pricing)
-            var pricingRequest = new QuotePricingRequest
-            {
-                UserId = userId,
-                Region = user.Region,
-                SizeInBytes = totalSizeInBytes,
-                HealthMultiplier = torrentInfo.HealthMultiplier,
-                IsCacheHit = false, // You might want to check if this torrent exists in S3 here for true CacheHit logic
-                SelectedFilePaths = request.SelectedFilePaths,
-                VoucherCode = request.VoucherCode,
-                TorrentFile = torrentStoredResult.Value,
-                InfoHash = torrentInfo.InfoHash
-            };
-
-            var pricingResult = await quotePricingService.GenerateOrReuseInvoiceAsync(pricingRequest);
-            if (pricingResult.IsFailure)
-                return Result<QuoteResponseDto>.Failure(pricingResult.Error);
-
-            var quotePricing = pricingResult.Value;
-            var invoice = quotePricing.Invoice;
-            var snapshot = quotePricing.Snapshot;
-
-            // Ensure TorrentFile is loaded
-            if (invoice.TorrentFile == null)
-            {
-                return Result<QuoteResponseDto>.Failure("TORRENT_FILE_NOT_LOADED", "Torrent file information is missing from invoice.");
-            }
-
-            // 7. Return Response
+            // 4. Return Response (no pricing, no invoice)
             return Result.Success(new QuoteResponseDto
             {
-                IsReadyToDownload = true,
-                OriginalAmountInUSD = invoice.OriginalAmountInUSD,
-                FinalAmountInUSD = invoice.FinalAmountInUSD,
-                FinalAmountInNCurrency = invoice.FinalAmountInNCurrency,
-                FileName = invoice.TorrentFile.FileName,
-                SizeInBytes = snapshot.TotalSizeInBytes,
-                IsCached = snapshot.IsCacheHit,
-                InfoHash = invoice.TorrentFile.InfoHash,
-                PricingDetails = snapshot,
-                InvoiceId = invoice.Id,
-                TorrentHealth = torrentInfo.Health
+                FileName = torrentStoredResult.Value.FileName,
+                SizeInBytes = totalSizeInBytes,
+                InfoHash = torrentStoredResult.Value.InfoHash,
+                TorrentHealth = torrentInfo.Health,
+                TorrentFileId = torrentStoredResult.Value.Id,
+                SelectedFiles = request.SelectedFilePaths?.ToArray() ?? []
             });
         }
 
-        public async Task<Result<Invoice>> FindInvoiceByTorrentAndUserId(string infoHash, int userId)
-        {
-            var spec = new ActiveInvoiceByTorrentAndUserSpec(infoHash, userId);
-            var quote = await unitOfWork.Repository<Invoice>().GetEntityWithSpec(spec);
-
-            if (quote == null)
-                return Result<Invoice>.Failure("QUOTE_NOT_FOUND", "No active quote found.");
-
-            if (quote.IsExpired)
-                return Result<Invoice>.Failure("QUOTE_EXPIRED", "The quote has expired.");
-
-            return Result.Success(quote);
-        }
 
         // --- Helpers ---
 

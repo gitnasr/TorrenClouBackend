@@ -26,7 +26,6 @@ namespace TorreClou.Infrastructure.Extensions
             services.AddSingleton<UpdateAuditableEntitiesInterceptor>();
 
             // Coinremitter payment gateway
-            services.AddHttpClient<IPaymentGateway, CoinremitterService>();
             services.Configure<CoinremitterSettings>(configuration.GetSection("Coinremitter"));
 
             // Backblaze B2 Storage
@@ -65,6 +64,7 @@ namespace TorreClou.Infrastructure.Extensions
             // Job Handlers (Strategy Pattern for decoupled job processing)
             // Storage Provider Handlers
             services.AddScoped<IStorageProviderHandler, GoogleDriveStorageProviderHandler>();
+            services.AddScoped<IStorageProviderHandler, S3StorageProviderHandler>();
             
             // Job Type Handlers
             services.AddScoped<IJobTypeHandler, TorrentJobTypeHandler>();
