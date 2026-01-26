@@ -44,10 +44,7 @@ namespace TorreClou.Infrastructure.Data
             // --- User Configuration ---
             builder.Entity<User>()
                 .HasIndex(u => u.Email).IsUnique();
-            builder.Entity<User>()
-                .Property(u => u.Role).HasConversion<string>();
-            builder.Entity<User>()
-                .Property(u => u.Region).HasConversion<string>();
+      
 
             // --- Storage Profile ---
             builder.Entity<UserStorageProfile>()

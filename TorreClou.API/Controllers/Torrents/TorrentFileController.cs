@@ -24,7 +24,7 @@ namespace TorreClou.API.Controllers.Torrents
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> CreateJobAsync([FromBody] CreateJobRequestDto request)
         {
-            var userId = GetUserId();
+            var userId = GetCurrentUserId();
             
             logger.LogInformation("Create job requested | TorrentFileId: {TorrentFileId} | UserId: {UserId}", request.TorrentFileId, userId);
 

@@ -22,7 +22,7 @@ namespace TorreClou.API.Controllers
         [HttpGet("{id}")]
         public async Task<IActionResult> GetJob(int id)
         {
-            var result = await jobService.GetJobByIdAsync(UserId, id, UserRole);
+            var result = await jobService.GetJobByIdAsync(UserId, id);
             return HandleResult(result);
         }
 
@@ -33,7 +33,7 @@ namespace TorreClou.API.Controllers
         public async Task<IActionResult> GetJobTimeline(int id)
         {
             // First verify the user has access to this job
-            var jobResult = await jobService.GetJobByIdAsync(UserId, id, UserRole);
+            var jobResult = await jobService.GetJobByIdAsync(UserId, id);
             if (!jobResult.IsSuccess)
             {
                 return HandleResult(jobResult);
@@ -53,14 +53,14 @@ namespace TorreClou.API.Controllers
         [HttpPost("{id}/retry")]
         public async Task<IActionResult> RetryJob(int id)
         {
-            var result = await jobService.RetryJobAsync(id, UserId, UserRole);
+            var result = await jobService.RetryJobAsync(id, UserId);
             return HandleResult(result);
         }
 
         [HttpPost("{id}/cancel")]
         public async Task<IActionResult> CancelJob(int id)
         {
-            var result = await jobService.CancelJobAsync(id, UserId, UserRole);
+            var result = await jobService.CancelJobAsync(id, UserId);
             return HandleResult(result);
         }
 

@@ -12,7 +12,6 @@ namespace TorreClou.Application.Extensions
         public static IServiceCollection AddApplicationServices(this IServiceCollection services)
         {
             services.AddScoped<IAuthService, AuthService>();
-            services.AddScoped<IUserService, UserService>();
             services.AddScoped<ITorrentQuoteService, TorrentQuoteService>();
             services.AddScoped<ITrackerScraper, UdpTrackerScraper>();
             services.AddScoped<ITorrentService, TorrentService>();
