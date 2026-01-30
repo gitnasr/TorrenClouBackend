@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+﻿using System;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
@@ -6,7 +7,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace TorreClou.Infrastructure.Migrations
 {
     /// <inheritdoc />
-    public partial class InitialMigration : Migration
+    public partial class InitialCreate : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -44,12 +45,10 @@ namespace TorreClou.Infrastructure.Migrations
                         .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
                     Email = table.Column<string>(type: "text", nullable: false),
                     FullName = table.Column<string>(type: "text", nullable: false),
-                    OAuthProvider = table.Column<string>(type: "text", nullable: false),
-                    OAuthSubjectId = table.Column<string>(type: "text", nullable: false),
-                    PhoneNumber = table.Column<string>(type: "text", nullable: false),
-                    IsPhoneNumberVerified = table.Column<bool>(type: "boolean", nullable: false),
-                    Region = table.Column<string>(type: "text", nullable: false),
-                    Role = table.Column<string>(type: "text", nullable: false),
+                    GoogleDriveEmail = table.Column<string>(type: "text", nullable: true),
+                    GoogleDriveRefreshToken = table.Column<string>(type: "text", nullable: true),
+                    GoogleDriveTokenCreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    IsGoogleDriveConnected = table.Column<bool>(type: "boolean", nullable: false),
                     CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
                 },
@@ -78,36 +77,6 @@ namespace TorreClou.Infrastructure.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_Vouchers", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "Deposits",
-                schema: "dev",
-                columns: table => new
-                {
-                    Id = table.Column<int>(type: "integer", nullable: false)
-                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
-                    UserId = table.Column<int>(type: "integer", nullable: false),
-                    Amount = table.Column<decimal>(type: "numeric", nullable: false),
-                    Currency = table.Column<string>(type: "text", nullable: false),
-                    PaymentProvider = table.Column<string>(type: "text", nullable: false),
-                    GatewayTransactionId = table.Column<string>(type: "text", nullable: false),
-                    PaymentUrl = table.Column<string>(type: "text", nullable: true),
-                    Status = table.Column<string>(type: "text", nullable: false),
-                    WalletTransactionId = table.Column<int>(type: "integer", nullable: true),
-                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_Deposits", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_Deposits_Users_UserId",
-                        column: x => x.UserId,
-                        principalSchema: "dev",
-                        principalTable: "Users",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
@@ -196,33 +165,6 @@ namespace TorreClou.Infrastructure.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "WalletTransactions",
-                schema: "dev",
-                columns: table => new
-                {
-                    Id = table.Column<int>(type: "integer", nullable: false)
-                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
-                    UserId = table.Column<int>(type: "integer", nullable: false),
-                    Amount = table.Column<decimal>(type: "numeric", nullable: false),
-                    Type = table.Column<string>(type: "text", nullable: false),
-                    ReferenceId = table.Column<string>(type: "text", nullable: true),
-                    Description = table.Column<string>(type: "text", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_WalletTransactions", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_WalletTransactions_Users_UserId",
-                        column: x => x.UserId,
-                        principalSchema: "dev",
-                        principalTable: "Users",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
-
-            migrationBuilder.CreateTable(
                 name: "UserVoucherUsages",
                 schema: "dev",
                 columns: table => new
@@ -273,10 +215,11 @@ namespace TorreClou.Infrastructure.Migrations
                     NextRetryAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
                     LastHeartbeat = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
                     HangfireJobId = table.Column<string>(type: "text", nullable: true),
+                    HangfireUploadJobId = table.Column<string>(type: "text", nullable: true),
                     DownloadPath = table.Column<string>(type: "text", nullable: true),
                     BytesDownloaded = table.Column<long>(type: "bigint", nullable: false),
                     TotalBytes = table.Column<long>(type: "bigint", nullable: false),
-                    SelectedFileIndices = table.Column<int[]>(type: "integer[]", nullable: false),
+                    SelectedFilePaths = table.Column<string[]>(type: "text[]", nullable: true),
                     CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
                 },
@@ -307,57 +250,32 @@ namespace TorreClou.Infrastructure.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "Invoices",
+                name: "JobStatusHistories",
                 schema: "dev",
                 columns: table => new
                 {
                     Id = table.Column<int>(type: "integer", nullable: false)
                         .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
-                    UserId = table.Column<int>(type: "integer", nullable: false),
-                    JobId = table.Column<int>(type: "integer", nullable: true),
-                    OriginalAmountInUSD = table.Column<decimal>(type: "numeric", nullable: false),
-                    FinalAmountInUSD = table.Column<decimal>(type: "numeric", nullable: false),
-                    FinalAmountInNCurrency = table.Column<decimal>(type: "numeric", nullable: false),
-                    ExchangeRate = table.Column<decimal>(type: "numeric", nullable: false),
-                    CancelledAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
-                    PricingSnapshotJson = table.Column<string>(type: "jsonb", nullable: false),
-                    PaidAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
-                    RefundedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
-                    WalletTransactionId = table.Column<int>(type: "integer", nullable: true),
-                    VoucherId = table.Column<int>(type: "integer", nullable: true),
-                    TorrentFileId = table.Column<int>(type: "integer", nullable: false),
-                    ExpiresAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    JobId = table.Column<int>(type: "integer", nullable: false),
+                    FromStatus = table.Column<string>(type: "text", nullable: true),
+                    ToStatus = table.Column<string>(type: "text", nullable: false),
+                    Source = table.Column<string>(type: "text", nullable: false),
+                    ErrorMessage = table.Column<string>(type: "text", nullable: true),
+                    MetadataJson = table.Column<string>(type: "jsonb", nullable: true),
+                    ChangedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_Invoices", x => x.Id);
+                    table.PrimaryKey("PK_JobStatusHistories", x => x.Id);
                     table.ForeignKey(
-                        name: "FK_Invoices_RequestedFiles_TorrentFileId",
-                        column: x => x.TorrentFileId,
-                        principalSchema: "dev",
-                        principalTable: "RequestedFiles",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                    table.ForeignKey(
-                        name: "FK_Invoices_UserJobs_JobId",
+                        name: "FK_JobStatusHistories_UserJobs_JobId",
                         column: x => x.JobId,
                         principalSchema: "dev",
                         principalTable: "UserJobs",
-                        principalColumn: "Id");
-                    table.ForeignKey(
-                        name: "FK_Invoices_Vouchers_VoucherId",
-                        column: x => x.VoucherId,
-                        principalSchema: "dev",
-                        principalTable: "Vouchers",
-                        principalColumn: "Id");
-                    table.ForeignKey(
-                        name: "FK_Invoices_WalletTransactions_WalletTransactionId",
-                        column: x => x.WalletTransactionId,
-                        principalSchema: "dev",
-                        principalTable: "WalletTransactions",
-                        principalColumn: "Id");
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
@@ -441,42 +359,40 @@ namespace TorreClou.Infrastructure.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
-            migrationBuilder.CreateIndex(
-                name: "IX_Deposits_GatewayTransactionId",
+            migrationBuilder.CreateTable(
+                name: "SyncStatusHistories",
                 schema: "dev",
-                table: "Deposits",
-                column: "GatewayTransactionId");
+                columns: table => new
+                {
+                    Id = table.Column<int>(type: "integer", nullable: false)
+                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
+                    SyncId = table.Column<int>(type: "integer", nullable: false),
+                    FromStatus = table.Column<string>(type: "text", nullable: true),
+                    ToStatus = table.Column<string>(type: "text", nullable: false),
+                    Source = table.Column<string>(type: "text", nullable: false),
+                    ErrorMessage = table.Column<string>(type: "text", nullable: true),
+                    MetadataJson = table.Column<string>(type: "jsonb", nullable: true),
+                    ChangedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_SyncStatusHistories", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_SyncStatusHistories_Syncs_SyncId",
+                        column: x => x.SyncId,
+                        principalSchema: "dev",
+                        principalTable: "Syncs",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
 
             migrationBuilder.CreateIndex(
-                name: "IX_Deposits_UserId",
+                name: "IX_JobStatusHistories_JobId_ChangedAt",
                 schema: "dev",
-                table: "Deposits",
-                column: "UserId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Invoices_JobId",
-                schema: "dev",
-                table: "Invoices",
-                column: "JobId",
-                unique: true);
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Invoices_TorrentFileId",
-                schema: "dev",
-                table: "Invoices",
-                column: "TorrentFileId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Invoices_VoucherId",
-                schema: "dev",
-                table: "Invoices",
-                column: "VoucherId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Invoices_WalletTransactionId",
-                schema: "dev",
-                table: "Invoices",
-                column: "WalletTransactionId");
+                table: "JobStatusHistories",
+                columns: new[] { "JobId", "ChangedAt" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_RequestedFiles_InfoHash_UploadedByUserId",
@@ -508,6 +424,12 @@ namespace TorreClou.Infrastructure.Migrations
                 schema: "dev",
                 table: "Syncs",
                 column: "JobId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SyncStatusHistories_SyncId_ChangedAt",
+                schema: "dev",
+                table: "SyncStatusHistories",
+                columns: new[] { "SyncId", "ChangedAt" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_UserJobs_RequestFileId",
@@ -564,31 +486,25 @@ namespace TorreClou.Infrastructure.Migrations
                 table: "Vouchers",
                 column: "Code",
                 unique: true);
-
-            migrationBuilder.CreateIndex(
-                name: "IX_WalletTransactions_UserId",
-                schema: "dev",
-                table: "WalletTransactions",
-                column: "UserId");
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
-                name: "Deposits",
-                schema: "dev");
-
-            migrationBuilder.DropTable(
                 name: "FlashSales",
                 schema: "dev");
 
             migrationBuilder.DropTable(
-                name: "Invoices",
+                name: "JobStatusHistories",
                 schema: "dev");
 
             migrationBuilder.DropTable(
                 name: "S3SyncProgresses",
+                schema: "dev");
+
+            migrationBuilder.DropTable(
+                name: "SyncStatusHistories",
                 schema: "dev");
 
             migrationBuilder.DropTable(
@@ -597,10 +513,6 @@ namespace TorreClou.Infrastructure.Migrations
 
             migrationBuilder.DropTable(
                 name: "UserVoucherUsages",
-                schema: "dev");
-
-            migrationBuilder.DropTable(
-                name: "WalletTransactions",
                 schema: "dev");
 
             migrationBuilder.DropTable(

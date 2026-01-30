@@ -38,10 +38,6 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 # Copy published output
 COPY --from=build /app/publish .
 
-# Copy entrypoint script
-COPY TorreClou.Sync.Worker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
 # === Environment Variables ===
 ENV ASPNETCORE_ENVIRONMENT=Production
 
@@ -59,5 +55,8 @@ ENV DOTNET_EnableDiagnostics=0
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app /mnt/torrents
 
+# Switch to non-root user
+USER appuser
+
 # Set entry point
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["dotnet", "TorreClou.Sync.Worker.dll"]

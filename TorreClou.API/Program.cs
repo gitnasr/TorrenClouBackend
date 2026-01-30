@@ -1,4 +1,5 @@
 using Hangfire;
+using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 using Serilog;
 using TorreClou.API.Extensions;
@@ -52,6 +53,30 @@ try
     });
 
     var app = builder.Build();
+
+    // Apply database migrations automatically on startup
+    using (var scope = app.Services.CreateScope())
+    {
+        var services = scope.ServiceProvider;
+        try
+        {
+            var context = services.GetRequiredService<TorreClou.Infrastructure.Data.ApplicationDbContext>();
+            var logger = services.GetRequiredService<ILogger<Program>>();
+            
+            logger.LogInformation("Checking for pending database migrations...");
+            
+            // This will create the database if it doesn't exist and apply all pending migrations
+            context.Database.Migrate();
+            
+            logger.LogInformation("Database migrations applied successfully");
+        }
+        catch (Exception ex)
+        {
+            var logger = services.GetRequiredService<ILogger<Program>>();
+            logger.LogError(ex, "An error occurred while migrating the database");
+            throw;
+        }
+    }
 
     // Middleware
     app.UseExceptionHandler();

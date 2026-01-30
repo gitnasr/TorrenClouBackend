@@ -23,77 +23,6 @@ namespace TorreClou.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("Invoice", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime?>("CancelledAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal>("ExchangeRate")
-                        .HasColumnType("numeric");
-
-                    b.Property<DateTime>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal>("FinalAmountInNCurrency")
-                        .HasColumnType("numeric");
-
-                    b.Property<decimal>("FinalAmountInUSD")
-                        .HasColumnType("numeric");
-
-                    b.Property<int?>("JobId")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("OriginalAmountInUSD")
-                        .HasColumnType("numeric");
-
-                    b.Property<DateTime?>("PaidAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("PricingSnapshotJson")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.Property<DateTime?>("RefundedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("TorrentFileId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("VoucherId")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("WalletTransactionId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("JobId")
-                        .IsUnique();
-
-                    b.HasIndex("TorrentFileId");
-
-                    b.HasIndex("VoucherId");
-
-                    b.HasIndex("WalletTransactionId");
-
-                    b.ToTable("Invoices", "dev");
-                });
-
             modelBuilder.Entity("TorreClou.Core.Entities.Compliance.UserStrike", b =>
                 {
                     b.Property<int>("Id")
@@ -130,95 +59,6 @@ namespace TorreClou.Infrastructure.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("UserStrikes", "dev");
-                });
-
-            modelBuilder.Entity("TorreClou.Core.Entities.Financals.Deposit", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<decimal>("Amount")
-                        .HasColumnType("numeric");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("GatewayTransactionId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("PaymentProvider")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("PaymentUrl")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("WalletTransactionId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("GatewayTransactionId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("Deposits", "dev");
-                });
-
-            modelBuilder.Entity("TorreClou.Core.Entities.Financals.WalletTransaction", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<decimal>("Amount")
-                        .HasColumnType("numeric");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("ReferenceId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Type")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("WalletTransactions", "dev");
                 });
 
             modelBuilder.Entity("TorreClou.Core.Entities.Jobs.JobStatusHistory", b =>
@@ -480,9 +320,6 @@ namespace TorreClou.Infrastructure.Migrations
                     b.Property<string>("HangfireUploadJobId")
                         .HasColumnType("text");
 
-                    b.Property<bool>("IsRefunded")
-                        .HasColumnType("boolean");
-
                     b.Property<DateTime?>("LastHeartbeat")
                         .HasColumnType("timestamp with time zone");
 
@@ -493,7 +330,6 @@ namespace TorreClou.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.PrimitiveCollection<string[]>("SelectedFilePaths")
-                        .IsRequired()
                         .HasColumnType("text[]");
 
                     b.Property<DateTime?>("StartedAt")
@@ -758,28 +594,17 @@ namespace TorreClou.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<bool>("IsPhoneNumberVerified")
+                    b.Property<string>("GoogleDriveEmail")
+                        .HasColumnType("text");
+
+                    b.Property<string>("GoogleDriveRefreshToken")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("GoogleDriveTokenCreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsGoogleDriveConnected")
                         .HasColumnType("boolean");
-
-                    b.Property<string>("OAuthProvider")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("OAuthSubjectId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("PhoneNumber")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Region")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Role")
-                        .IsRequired()
-                        .HasColumnType("text");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -792,61 +617,10 @@ namespace TorreClou.Infrastructure.Migrations
                     b.ToTable("Users", "dev");
                 });
 
-            modelBuilder.Entity("Invoice", b =>
-                {
-                    b.HasOne("TorreClou.Core.Entities.Jobs.UserJob", "Job")
-                        .WithOne("Invoice")
-                        .HasForeignKey("Invoice", "JobId");
-
-                    b.HasOne("TorreClou.Core.Entities.Torrents.RequestedFile", "TorrentFile")
-                        .WithMany()
-                        .HasForeignKey("TorrentFileId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("TorreClou.Core.Entities.Marketing.Voucher", "Voucher")
-                        .WithMany()
-                        .HasForeignKey("VoucherId");
-
-                    b.HasOne("TorreClou.Core.Entities.Financals.WalletTransaction", "WalletTransaction")
-                        .WithMany()
-                        .HasForeignKey("WalletTransactionId");
-
-                    b.Navigation("Job");
-
-                    b.Navigation("TorrentFile");
-
-                    b.Navigation("Voucher");
-
-                    b.Navigation("WalletTransaction");
-                });
-
             modelBuilder.Entity("TorreClou.Core.Entities.Compliance.UserStrike", b =>
                 {
                     b.HasOne("TorreClou.Core.Entities.User", "User")
                         .WithMany("Strikes")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("TorreClou.Core.Entities.Financals.Deposit", b =>
-                {
-                    b.HasOne("TorreClou.Core.Entities.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("TorreClou.Core.Entities.Financals.WalletTransaction", b =>
-                {
-                    b.HasOne("TorreClou.Core.Entities.User", "User")
-                        .WithMany("WalletTransactions")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -921,7 +695,7 @@ namespace TorreClou.Infrastructure.Migrations
                         .IsRequired();
 
                     b.HasOne("TorreClou.Core.Entities.User", "User")
-                        .WithMany("Jobs")
+                        .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -983,8 +757,6 @@ namespace TorreClou.Infrastructure.Migrations
 
             modelBuilder.Entity("TorreClou.Core.Entities.Jobs.UserJob", b =>
                 {
-                    b.Navigation("Invoice");
-
                     b.Navigation("StatusHistory");
                 });
 
@@ -995,15 +767,11 @@ namespace TorreClou.Infrastructure.Migrations
 
             modelBuilder.Entity("TorreClou.Core.Entities.User", b =>
                 {
-                    b.Navigation("Jobs");
-
                     b.Navigation("StorageProfiles");
 
                     b.Navigation("Strikes");
 
                     b.Navigation("UploadedTorrentFiles");
-
-                    b.Navigation("WalletTransactions");
                 });
 #pragma warning restore 612, 618
         }

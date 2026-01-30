@@ -81,19 +81,41 @@ services:
       - downloads:/app/downloads
     restart: unless-stopped
 
-  # Storage Upload Workers (GoogleDrive & S3)
-  storage-worker:
+  # Google Drive Sync Worker
+  googledrive-worker:
     build:
       context: .
-      dockerfile: TorreClou.Worker/Dockerfile
-    container_name: torrenclo_storage_worker
+      dockerfile: TorreClou.GoogleDrive.Worker/Dockerfile
+    container_name: torrenclo_googledrive_worker
     environment:
       - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB:-torrenclo};Username=${POSTGRES_USER:-torrenclo_user};Password=${POSTGRES_PASSWORD:-changeme}
       - Redis__Configuration=redis:6379
-      - Hangfire__WorkerName=storage-worker
-      - Hangfire__Queues=googledrive,s3,default
-      - MAX_CONCURRENT_UPLOADS=${MAX_CONCURRENT_UPLOADS:-2}
+      - Hangfire__WorkerName=googledrive-worker
+      - Hangfire__Queues=googledrive,default
+      - MAX_CONCURRENT_UPLOADS=${MAX_CONCURRENT_GOOGLEDRIVE_UPLOADS:-2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - downloads:/app/downloads
+    restart: unless-stopped
+
+  # S3 Sync Worker
+  s3-worker:
+    build:
+      context: .
+      dockerfile: TorreClou.Sync.Worker/Dockerfile
+    container_name: torrenclo_s3_worker
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB:-torrenclo};Username=${POSTGRES_USER:-torrenclo_user};Password=${POSTGRES_PASSWORD:-changeme}
+      - Redis__Configuration=redis:6379
+      - Hangfire__WorkerName=s3-worker
+      - Hangfire__Queues=s3,default
+      - MAX_CONCURRENT_UPLOADS=${MAX_CONCURRENT_S3_UPLOADS:-2}
     depends_on:
       postgres:
         condition: service_healthy

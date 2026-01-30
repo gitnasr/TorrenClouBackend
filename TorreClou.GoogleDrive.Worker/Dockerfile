@@ -41,10 +41,6 @@ COPY --from=build /app/publish .
 # Explicitly copy appsettings.json from build stage source (ensures it's available)
 COPY --from=build /src/TorreClou.GoogleDrive.Worker/appsettings.json ./appsettings.json
 
-# Copy entrypoint script
-COPY TorreClou.GoogleDrive.Worker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
 # === Environment Variables ===
 ENV ASPNETCORE_ENVIRONMENT=Production
 
@@ -62,6 +58,9 @@ ENV DOTNET_EnableDiagnostics=0
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app
 
+# Switch to non-root user
+USER appuser
+
 # Set entry point
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["dotnet", "TorreClou.GoogleDrive.Worker.dll"]
 

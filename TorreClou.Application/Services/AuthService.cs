@@ -21,8 +21,8 @@ namespace TorreClou.Application.Services
         public async Task<Result<AuthResponseDto>> LoginAsync(string email, string password)
         {
             // Get admin credentials from environment
-            var adminEmail = _configuration["ADMIN_EMAIL"] ?? _configuration["Auth:AdminEmail"];
-            var adminPassword = _configuration["ADMIN_PASSWORD"] ?? _configuration["Auth:AdminPassword"];
+            var adminEmail = _configuration["ADMIN_EMAIL"] ?? _configuration["Auth:AdminEmail"] ?? "admin@gitnasr.com";
+            var adminPassword = _configuration["ADMIN_PASSWORD"] ?? _configuration["Auth:AdminPassword"] ?? "P@ssword123!";
             var adminName = _configuration["ADMIN_NAME"] ?? _configuration["Auth:AdminName"] ?? "Admin";
 
             if (string.IsNullOrEmpty(adminEmail) || string.IsNullOrEmpty(adminPassword))
