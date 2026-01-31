@@ -9,7 +9,6 @@ namespace TorreClou.Infrastructure.Services.S3
 {
     public interface IS3FileDownloadService
     {
-        Task<Result<string>> DownloadToTempAsync(string s3Key, string tempDirectory, CancellationToken cancellationToken = default);
         Task<Result<Stream>> GetStreamAsync(string s3Key, CancellationToken cancellationToken = default);
         Task<Result<int>> DownloadAllWithPrefixAsync(string s3KeyPrefix, string tempDirectory, CancellationToken cancellationToken = default);
     }
@@ -40,50 +39,7 @@ namespace TorreClou.Infrastructure.Services.S3
             );
         }
 
-        public async Task<Result<string>> DownloadToTempAsync(string s3Key, string tempDirectory, CancellationToken cancellationToken = default)
-        {
-            try
-            {
-                var fileName = Path.GetFileName(s3Key);
-                if (string.IsNullOrEmpty(fileName))
-                {
-                    fileName = Guid.NewGuid().ToString();
-                }
-
-                var tempFilePath = Path.Combine(tempDirectory, fileName);
-
-                // Ensure temp directory exists
-                Directory.CreateDirectory(tempDirectory);
-
-                var request = new GetObjectRequest
-                {
-                    BucketName = _settings.BucketName,
-                    Key = s3Key
-                };
-
-                using var response = await _s3Client.GetObjectAsync(request, cancellationToken);
-                await using var fileStream = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None);
-                await response.ResponseStream.CopyToAsync(fileStream, cancellationToken);
-
-                _logger.LogDebug("Downloaded file from S3 | Key: {Key} | TempPath: {TempPath}",
-                    s3Key, tempFilePath);
-
-                return Result.Success(tempFilePath);
-            }
-            catch (AmazonS3Exception ex)
-            {
-                _logger.LogError(ex, "Failed to download file from S3 | Key: {Key}",
-                    s3Key);
-                return Result<string>.Failure("DOWNLOAD_FAILED", $"Failed to download file: {ex.Message}");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error downloading file from S3 | Key: {Key}",
-                    s3Key);
-                return Result<string>.Failure("DOWNLOAD_ERROR", $"Unexpected error: {ex.Message}");
-            }
-        }
-
+      
         public async Task<Result<Stream>> GetStreamAsync(string s3Key, CancellationToken cancellationToken = default)
         {
             try
