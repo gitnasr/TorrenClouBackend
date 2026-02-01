@@ -46,32 +46,52 @@ namespace TorreClou.Infrastructure.Extensions
                     outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}"
                 );
 
-            // Configure Loki sink
-            var lokiUrl = configuration["Observability:LokiUrl"];
+            // Configure Loki sink - supports both local (no auth) and cloud (with auth)
+            var lokiUrl = configuration["Observability:LokiUrl"] ?? "http://loki:3100";
             var lokiUser = configuration["Observability:LokiUsername"];
             var lokiKey = configuration["Observability:LokiApiKey"];
 
-            if (!string.IsNullOrEmpty(lokiUrl) && 
-                !string.IsNullOrEmpty(lokiUser) && 
-                !string.IsNullOrEmpty(lokiKey) &&
-                !lokiUrl.Contains("localhost"))
+            if (!string.IsNullOrEmpty(lokiUrl))
             {
-                // Test Loki connection first
-                TestLokiConnection(lokiUrl, lokiUser, lokiKey, serviceName, environment).Wait();
-                
-                loggerConfig.WriteTo.GrafanaLoki(
-                    lokiUrl,
-                    credentials: new LokiCredentials { Login = lokiUser, Password = lokiKey },
-                    labels: new[]
-                    {
-                        new LokiLabel { Key = "app", Value = "torreclou" },
-                        new LokiLabel { Key = "service", Value = serviceName },
-                        new LokiLabel { Key = "env", Value = environment ?? "unknown" }
-                    },
-                    propertiesAsLabels: new[] { "level" },
-                    batchPostingLimit: 5,
-                    period: TimeSpan.FromSeconds(1)
-                );
+                var isLocalLoki = lokiUrl.Contains("localhost") || lokiUrl.Contains("loki:3100");
+
+                if (!isLocalLoki && !string.IsNullOrEmpty(lokiUser) && !string.IsNullOrEmpty(lokiKey))
+                {
+                    // Cloud Loki with authentication
+                    TestLokiConnection(lokiUrl, lokiUser, lokiKey, serviceName, environment).Wait();
+
+                    loggerConfig.WriteTo.GrafanaLoki(
+                        lokiUrl,
+                        credentials: new LokiCredentials { Login = lokiUser, Password = lokiKey },
+                        labels: new[]
+                        {
+                            new LokiLabel { Key = "app", Value = "torreclou" },
+                            new LokiLabel { Key = "service", Value = serviceName },
+                            new LokiLabel { Key = "env", Value = environment ?? "unknown" }
+                        },
+                        propertiesAsLabels: new[] { "level" },
+                        batchPostingLimit: 5,
+                        period: TimeSpan.FromSeconds(1)
+                    );
+                }
+                else if (isLocalLoki)
+                {
+                    // Local Loki without authentication
+                    loggerConfig.WriteTo.GrafanaLoki(
+                        lokiUrl,
+                        labels: new[]
+                        {
+                            new LokiLabel { Key = "app", Value = "torreclou" },
+                            new LokiLabel { Key = "service", Value = serviceName },
+                            new LokiLabel { Key = "env", Value = environment ?? "unknown" }
+                        },
+                        propertiesAsLabels: new[] { "level" },
+                        batchPostingLimit: 10,
+                        period: TimeSpan.FromSeconds(2)
+                    );
+
+                    Console.WriteLine($"[LOKI] Configured for local Loki at {lokiUrl}");
+                }
             }
 
             Log.Logger = loggerConfig.CreateLogger();

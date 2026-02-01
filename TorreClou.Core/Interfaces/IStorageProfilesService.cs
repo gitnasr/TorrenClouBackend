@@ -11,6 +11,20 @@ namespace TorreClou.Core.Interfaces
         Task<Result> SetDefaultProfileAsync(int userId, int id);
         Task<Result<UserStorageProfile>> ValidateActiveStorageProfileByUserId(int userId, int profileId);
         Task<Result> DisconnectProfileAsync(int userId, int id);
+        
+        // S3 Provider Configuration
+        Task<Result<StorageProfileResultDto>> ConfigureS3StorageAsync(
+            int userId,
+            string profileName,
+            string s3Endpoint,
+            string s3AccessKey,
+            string s3SecretKey,
+            string s3BucketName,
+            string s3Region,
+            bool setAsDefault);
+        
+        Task<Result<StorageProvidersListDto>> GetUserStorageProvidersAsync(int userId);
+        Task<Result<bool>> DeleteStorageProfileAsync(int userId, int profileId);
     }
 }
 

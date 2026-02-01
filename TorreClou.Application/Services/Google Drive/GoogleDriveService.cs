@@ -1,12 +1,12 @@
-﻿using System.Web;
+using System.Web;
+using TorreClou.Core.DTOs.Storage.GoogleDrive;
 using TorreClou.Core.Interfaces;
+using TorreClou.Core.Shared;
 
 namespace TorreClou.Application.Services.Google_Drive
 {
-
-    public  class GoogleDriveService(IGoogleDriveAuthService googleDriveAuthService) : IGoogleDriveService
+    public class GoogleDriveService(IGoogleDriveAuthService googleDriveAuthService) : IGoogleDriveService
     {
-
         public async Task<string> GetAuthorizationUrlAsync(int userId, string? profileName = null)
         {
             var result = await googleDriveAuthService.GetAuthorizationUrlAsync(userId, profileName);
@@ -15,6 +15,11 @@ namespace TorreClou.Application.Services.Google_Drive
                 throw new UnauthorizedAccessException($"Failed to get authorization URL: {result.Error}");
             }
             return result.Value;
+        }
+
+        public async Task<Result<string>> ConfigureAndGetAuthUrlAsync(int userId, ConfigureGoogleDriveRequestDto request)
+        {
+            return await googleDriveAuthService.ConfigureAndGetAuthUrlAsync(userId, request);
         }
 
         public async Task<string> GetGoogleCallback(string code, string state)

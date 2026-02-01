@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using TorreClou.API.Middleware;
+using TorreClou.API.Services;
 
 namespace TorreClou.API.Extensions
 {
@@ -18,6 +19,10 @@ namespace TorreClou.API.Extensions
 
             services.AddExceptionHandler<GlobalExceptionHandler>();
             services.AddProblemDetails();
+
+            // Health Check Service with caching
+            services.AddMemoryCache();
+            services.AddScoped<IHealthCheckService, HealthCheckService>();
 
             return services;
         }

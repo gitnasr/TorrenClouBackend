@@ -61,8 +61,8 @@ namespace TorreClou.Infrastructure.Extensions
                     // Always enable local Prometheus exporter for /metrics endpoint
                     if (enablePrometheus)
                         metrics.AddPrometheusExporter();
-                    
-                    // Note: OTLP for metrics is disabled - using PrometheusRemoteWriteService instead
+
+                    // Metrics are scraped by local Prometheus from /metrics endpoint
                 });
 
             if (enableTracing)

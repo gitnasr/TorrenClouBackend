@@ -5,7 +5,7 @@ using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Extensions; // Ensure you have this for IsFailed()
-using SyncEntity = TorreClou.Core.Entities.Jobs.Sync;
+
 
 namespace TorreClou.Infrastructure.Filters
 {
@@ -18,23 +18,14 @@ namespace TorreClou.Infrastructure.Filters
 
             try
             {
-                // 1. Extract the ID (It could be JobId OR SyncId depending on the job type)
+                // 1. Extract the ID (JobId)
                 if (context.BackgroundJob.Job.Args.Count == 0 || context.BackgroundJob.Job.Args[0] is not int id)
                     return;
 
-                var jobType = context.BackgroundJob.Job.Type;
                 var errorMessage = failedState.Exception.Message;
 
-                // 2. Route based on Job Type name to avoid hard dependencies on Worker DLLs
-                // "S3SyncJob" takes a SyncId. All others (TorrentDownloadJob, GoogleDriveUploadJob) take a JobId.
-                if (jobType.Name.Contains("S3SyncJob"))
-                {
-                    UpdateSyncStatusToFailed(id, errorMessage).GetAwaiter().GetResult();
-                }
-                else
-                {
-                    UpdateUserJobStatusToFailed(id, errorMessage).GetAwaiter().GetResult();
-                }
+                // 2. Update UserJob status to failed
+                UpdateUserJobStatusToFailed(id, errorMessage).GetAwaiter().GetResult();
             }
             catch (Exception ex)
             {
@@ -70,29 +61,6 @@ namespace TorreClou.Infrastructure.Filters
                 StatusChangeSource.System,
                 $"System Failure: {error}",
                 new { exhaustedRetries = true, hangfireJobId = jobId });
-        }
-
-        private async Task UpdateSyncStatusToFailed(int syncId, string error)
-        {
-            using var scope = scopeFactory.CreateScope();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            var jobStatusService = scope.ServiceProvider.GetRequiredService<IJobStatusService>();
-
-            // Correctly using SyncEntity repository
-            var sync = await unitOfWork.Repository<SyncEntity>().GetByIdAsync(syncId);
-
-            if (sync == null || sync.Status == SyncStatus.FAILED || sync.Status == SyncStatus.COMPLETED) return;
-
-            logger.LogError("[Filter] Marking Sync {SyncId} as Failed (Exhausted). Error: {Error}", syncId, error);
-
-            sync.NextRetryAt = null;
-
-            await jobStatusService.TransitionSyncStatusAsync(
-                sync,
-                SyncStatus.FAILED,
-                StatusChangeSource.System,
-                $"System Failure: {error}",
-                new { exhaustedRetries = true });
         }
     }
 }

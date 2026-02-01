@@ -11,6 +11,7 @@ using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
 using TorreClou.Core.Options;
 using TorreClou.Core.DTOs.Storage.Google_Drive;
+using TorreClou.Core.DTOs.Storage.GoogleDrive;
 
 namespace TorreClou.Application.Services
 {
@@ -23,6 +24,7 @@ namespace TorreClou.Application.Services
     {
         private readonly GoogleDriveSettings _settings = settings.Value;
         private const string RedisKeyPrefix = "oauth:state:";
+        private const string RedisKeyPrefixConfigure = "oauth:gdrive:state:";
 
         public async Task<Result<string>> GetAuthorizationUrlAsync(int userId, string? profileName = null)
         {
@@ -83,43 +85,145 @@ namespace TorreClou.Application.Services
             }
         }
 
+        public async Task<Result<string>> ConfigureAndGetAuthUrlAsync(int userId, ConfigureGoogleDriveRequestDto request)
+        {
+            try
+            {
+                // Validate credentials format
+                if (string.IsNullOrEmpty(request.ClientId) || !request.ClientId.Contains(".apps.googleusercontent.com"))
+                {
+                    return Result<string>.Failure("INVALID_CLIENT_ID", "Invalid Google Client ID format. It should end with .apps.googleusercontent.com");
+                }
+
+                if (string.IsNullOrEmpty(request.ClientSecret))
+                {
+                    return Result<string>.Failure("INVALID_CLIENT_SECRET", "Client Secret is required");
+                }
+
+                if (string.IsNullOrEmpty(request.RedirectUri))
+                {
+                    return Result<string>.Failure("INVALID_REDIRECT_URI", "Redirect URI is required");
+                }
+
+                // Validate profile name if provided
+                if (!string.IsNullOrWhiteSpace(request.ProfileName))
+                {
+                    var validationResult = ValidateProfileName(request.ProfileName);
+                    if (validationResult.IsFailure)
+                    {
+                        return Result<string>.Failure(validationResult.Error.Code, validationResult.Error.Message);
+                    }
+                }
+
+                // Generate state with user's credentials
+                var nonce = Guid.NewGuid().ToString("N");
+                var state = $"{userId}:{nonce}";
+                var stateHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(state)));
+
+                var oauthState = new OAuthState
+                {
+                    UserId = userId,
+                    Nonce = nonce,
+                    ProfileName = request.ProfileName?.Trim(),
+                    ExpiresAt = DateTime.UtcNow.AddMinutes(10), // Longer expiry for user to complete OAuth
+                    ClientId = request.ClientId,
+                    ClientSecret = request.ClientSecret,
+                    RedirectUri = request.RedirectUri,
+                    SetAsDefault = request.SetAsDefault
+                };
+
+                var redisKey = $"{RedisKeyPrefixConfigure}{stateHash}";
+                await redisCache.SetAsync(redisKey, JsonSerializer.Serialize(oauthState), TimeSpan.FromMinutes(10));
+
+                // Build authorization URL using USER'S credentials
+                var scopes = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email";
+                var encodedState = HttpUtility.UrlEncode(stateHash);
+
+                var authUrl = $"https://accounts.google.com/o/oauth2/v2/auth?" +
+                    $"client_id={HttpUtility.UrlEncode(request.ClientId)}&" +
+                    $"redirect_uri={HttpUtility.UrlEncode(request.RedirectUri)}&" +
+                    $"response_type=code&" +
+                    $"scope={HttpUtility.UrlEncode(scopes)}&" +
+                    $"access_type=offline&" +
+                    $"prompt=consent&" +
+                    $"state={encodedState}";
+
+                logger.LogInformation("Generated OAuth URL for user {UserId} with user-provided credentials", userId);
+                return Result.Success(authUrl);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error generating authorization URL with user credentials for user {UserId}", userId);
+                return Result<string>.Failure("AUTH_URL_ERROR", "Failed to generate authorization URL");
+            }
+        }
+
         public async Task<Result<int>> HandleOAuthCallbackAsync(string code, string state)
         {
             try
             {
-                // Retrieve and delete state from Redis (atomic operation ensures single-use)
-                var redisKey = $"{RedisKeyPrefix}{state}";
-                
-                OAuthState? storedState;
-              
-                    // Atomic get-and-delete operation
-                    var stateJson = await redisCache.GetAndDeleteAsync(redisKey);
-                    
-                    if (string.IsNullOrEmpty(stateJson))
-                    {
-                        return Result<int>.Failure("INVALID_STATE", "Invalid or expired OAuth state");
-                    }
+                // Try new configure flow first, then legacy flow
+                var configureKey = $"{RedisKeyPrefixConfigure}{state}";
+                var legacyKey = $"{RedisKeyPrefix}{state}";
 
-                    storedState = JsonSerializer.Deserialize<OAuthState>(stateJson);
-                    
-                    if (storedState == null)
-                    {
-                        return Result<int>.Failure("INVALID_STATE", "Invalid OAuth state format");
-                    }
+                OAuthState? storedState = null;
+                bool isConfigureFlow = false;
 
-                    // Validate expiration
-                    if (storedState.ExpiresAt < DateTime.UtcNow)
-                    {
-                        return Result<int>.Failure("INVALID_STATE", "Expired OAuth state");
-                    }
-              
+                // Try configure flow first (user-provided credentials)
+                var stateJson = await redisCache.GetAndDeleteAsync(configureKey);
+                if (!string.IsNullOrEmpty(stateJson))
+                {
+                    isConfigureFlow = true;
+                }
+                else
+                {
+                    // Try legacy flow (environment credentials)
+                    stateJson = await redisCache.GetAndDeleteAsync(legacyKey);
+                }
+
+                if (string.IsNullOrEmpty(stateJson))
+                {
+                    return Result<int>.Failure("INVALID_STATE", "Invalid or expired OAuth state");
+                }
+
+                storedState = JsonSerializer.Deserialize<OAuthState>(stateJson);
+
+                if (storedState == null)
+                {
+                    return Result<int>.Failure("INVALID_STATE", "Invalid OAuth state format");
+                }
+
+                // Validate expiration
+                if (storedState.ExpiresAt < DateTime.UtcNow)
+                {
+                    return Result<int>.Failure("INVALID_STATE", "Expired OAuth state");
+                }
 
                 // Extract userId and profileName from validated state
                 var userId = storedState.UserId;
                 var profileName = storedState.ProfileName;
 
+                // Determine which credentials to use for token exchange
+                string clientId, clientSecret, redirectUri;
+                if (isConfigureFlow && !string.IsNullOrEmpty(storedState.ClientId))
+                {
+                    // Use user-provided credentials from configure flow
+                    clientId = storedState.ClientId;
+                    clientSecret = storedState.ClientSecret;
+                    redirectUri = storedState.RedirectUri;
+                    logger.LogInformation("Using user-provided credentials for token exchange (user {UserId})", userId);
+                }
+                else
+                {
+                    // Use environment credentials (legacy flow)
+                    clientId = _settings.ClientId;
+                    clientSecret = _settings.ClientSecret;
+                    redirectUri = _settings.RedirectUri;
+                    logger.LogInformation("Using environment credentials for token exchange (user {UserId})", userId);
+                }
+
                 // Exchange authorization code for tokens
-                var tokenResponse = await ExchangeCodeForTokensAsync(code);
+                var tokenResponse = await ExchangeCodeForTokensAsync(code, clientId, clientSecret, redirectUri);
                 if (tokenResponse == null)
                 {
                     return Result<int>.Failure("TOKEN_EXCHANGE_FAILED", "Failed to exchange authorization code for tokens");
@@ -231,17 +335,21 @@ namespace TorreClou.Application.Services
                     unitOfWork.Repository<UserStorageProfile>().Add(profile);
                 }
 
-                // Store/update tokens in CredentialsJson
-                var credentials = new
+                // Store/update tokens in CredentialsJson (include OAuth app credentials for configure flow)
+                var credentials = new GoogleDriveCredentials
                 {
-                    access_token = tokenResponse.AccessToken,
-                    refresh_token = tokenResponse.RefreshToken,
-                    expires_at = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn).ToString("O"),
-                    token_type = tokenResponse.TokenType ?? "Bearer"
+                    // OAuth app credentials (only for configure flow)
+                    ClientId = isConfigureFlow ? clientId : string.Empty,
+                    ClientSecret = isConfigureFlow ? clientSecret : string.Empty,
+                    RedirectUri = isConfigureFlow ? redirectUri : string.Empty,
+                    // OAuth tokens from Google
+                    AccessToken = tokenResponse.AccessToken,
+                    RefreshToken = tokenResponse.RefreshToken,
+                    ExpiresAt = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn).ToString("O")
                 };
 
                 profile.CredentialsJson = JsonSerializer.Serialize(credentials);
-                
+
                 // Validate refresh token was saved
                 if (string.IsNullOrEmpty(tokenResponse.RefreshToken))
                 {
@@ -249,17 +357,25 @@ namespace TorreClou.Application.Services
                 }
                 else
                 {
-                    logger.LogInformation("Credentials saved successfully for profile {ProfileId} with refresh token present.", profile.Id);
+                    logger.LogInformation("Credentials saved successfully for profile {ProfileId} with refresh token present. Configure flow: {IsConfigureFlow}", profile.Id, isConfigureFlow);
                 }
 
-                // If this is the first profile or user wants it as default, set it
+                // If this is the first profile or user explicitly wants it as default, set it
                 var defaultProfileSpec = new BaseSpecification<UserStorageProfile>(
                     p => p.UserId == userId && p.IsDefault && p.IsActive
                 );
                 var hasDefault = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(defaultProfileSpec) != null;
 
-                if (!hasDefault)
+                if (!hasDefault || (isConfigureFlow && storedState.SetAsDefault))
                 {
+                    // Unset other defaults if setting this one as default
+                    if (storedState.SetAsDefault && hasDefault)
+                    {
+                        var allProfilesSpec = new BaseSpecification<UserStorageProfile>(p => p.UserId == userId && p.IsActive);
+                        var allProfiles = await unitOfWork.Repository<UserStorageProfile>().ListAsync(allProfilesSpec);
+                        foreach (var p in allProfiles)
+                            p.IsDefault = false;
+                    }
                     profile.IsDefault = true;
                 }
 
@@ -283,7 +399,11 @@ namespace TorreClou.Application.Services
             }
         }
 
-        private async Task<TokenResponse?> ExchangeCodeForTokensAsync(string code)
+        private async Task<TokenResponse?> ExchangeCodeForTokensAsync(
+            string code,
+            string clientId,
+            string clientSecret,
+            string redirectUri)
         {
             try
             {
@@ -291,9 +411,9 @@ namespace TorreClou.Application.Services
                 var requestBody = new Dictionary<string, string>
                 {
                     { "code", code },
-                    { "client_id", _settings.ClientId },
-                    { "client_secret", _settings.ClientSecret },
-                    { "redirect_uri", _settings.RedirectUri },
+                    { "client_id", clientId },
+                    { "client_secret", clientSecret },
+                    { "redirect_uri", redirectUri },
                     { "grant_type", "authorization_code" }
                 };
 

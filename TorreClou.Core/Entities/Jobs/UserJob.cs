@@ -43,14 +43,11 @@ namespace TorreClou.Core.Entities.Jobs
        
         public long TotalBytes { get; set; }
 
-        public Invoice? Invoice { get; set; }
 
-        public string[] SelectedFilePaths { get; set; } = [];
 
-        /// <summary>
-        /// Indicates if this job has been refunded. Refunded jobs cannot be retried.
-        /// </summary>
-        public bool IsRefunded { get; set; } = false;
+        public string[]? SelectedFilePaths { get; set; }
+
+
 
         /// <summary>
         /// Status change history for this job, providing a complete audit trail.

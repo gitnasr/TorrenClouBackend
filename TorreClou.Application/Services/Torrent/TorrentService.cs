@@ -10,7 +10,7 @@ namespace TorreClou.Application.Services.Torrent
     public class TorrentService(
         IUnitOfWork unitOfWork,
         ITrackerScraper trackerScraper,
-        IBlobStorageService blobStorageService, ITorrentHealthService torrentHealthService) : ITorrentService
+        ITorrentHealthService torrentHealthService) : ITorrentService
     {
         // Ideally move this to configuration
         private static readonly string[] FallbackTrackers =
@@ -160,17 +160,7 @@ namespace TorreClou.Application.Services.Torrent
             // LOGIC BRANCH 1: Entity Exists
             if (existingTorrent != null)
             {
-                // If DirectUrl is missing but we have a stream, repair it (Upload)
-                if (string.IsNullOrEmpty(existingTorrent.DirectUrl) && fileStream != null)
-                {
-                    var uploadResult = await UploadTorrentBlobAsync(fileStream, existingTorrent.InfoHash);
-                    if (uploadResult.IsSuccess)
-                    {
-                        existingTorrent.DirectUrl = uploadResult.Value;
-                        await unitOfWork.Complete();
-                    }
-                }
-
+                // Torrent already exists for this user
                 return Result.Success(existingTorrent);
             }
 
@@ -178,7 +168,7 @@ namespace TorreClou.Application.Services.Torrent
             // Note: We only set UploadedByUserId (foreign key), not the navigation property
             // EF Core will use the foreign key value to establish the relationship
 
-            // Upload to blob storage if stream provided
+            // Store torrent metadata in database only
             var newTorrentFile = new RequestedFile
             {
                 InfoHash = torrent.InfoHash,
@@ -187,35 +177,12 @@ namespace TorreClou.Application.Services.Torrent
                 Files = torrent.Files.Select(f => f.Path).ToArray(),
                 UploadedByUserId = userId,
                 FileType = "Torrent",
-                
             };
-            if (fileStream != null)
-            {
-                var uploadResult = await UploadTorrentBlobAsync(fileStream, torrent.InfoHash);
-                if (!uploadResult.IsSuccess)
-                {
-                    return Result<RequestedFile>.Failure("UPLOAD_FAILED", 
-                        $"Failed to upload torrent file to blob storage: {uploadResult.Error?.Message ?? "Unknown error"}. Cannot create RequestedFile.");
-                }
-
-                newTorrentFile.DirectUrl = uploadResult.Value;
-            }
 
             unitOfWork.Repository<RequestedFile>().Add(newTorrentFile);
             await unitOfWork.Complete();
 
             return Result.Success(newTorrentFile);
-        }
-
-        private async Task<Result<string>> UploadTorrentBlobAsync(Stream fileStream, string infoHash)
-        {
-            if (fileStream.CanSeek) fileStream.Position = 0;
-
-            return await blobStorageService.UploadAsync(
-                fileStream,
-                $"{infoHash}.torrent",
-                "application/x-bittorrent"
-            );
         }
     }
 }

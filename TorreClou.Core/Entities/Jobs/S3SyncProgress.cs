@@ -6,8 +6,6 @@ namespace TorreClou.Core.Entities.Jobs
     {
         public int JobId { get; set; }
         public UserJob UserJob { get; set; } = null!;
-        public int SyncId { get; set; }
-        public Sync Sync { get; set; } = null!;
         public string LocalFilePath { get; set; } = string.Empty;
         public string S3Key { get; set; } = string.Empty;
         public string? UploadId { get; set; } // S3 multipart upload ID
@@ -17,7 +15,7 @@ namespace TorreClou.Core.Entities.Jobs
         public long BytesUploaded { get; set; }
         public long TotalBytes { get; set; }
         public string PartETags { get; set; } = "[]"; // JSON array of {PartNumber, ETag}
-        public SyncStatus Status { get; set; }
+        public S3UploadProgressStatus Status { get; set; }
         public int? LastPartNumber { get; set; }
         public DateTime? StartedAt { get; set; }
         public DateTime? CompletedAt { get; set; }

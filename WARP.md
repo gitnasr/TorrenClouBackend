@@ -4,14 +4,14 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project Overview
 
-TorreClou is a .NET 9.0 torrent cloud storage platform with the following key features:
+TorreClou is a .NET 9.0 open-source torrent cloud storage platform with the following key features:
 - Torrent file processing and metadata extraction using MonoTorrent
-- Payment processing and wallet management
-- Multi-region support with region-specific pricing
-- Job queue system for background tasks
+- Multi-cloud upload support (Google Drive, AWS S3)
+- Job queue system for background tasks with Hangfire
 - Compliance/strike system for user violations
 - Google OAuth authentication with JWT tokens
 - PostgreSQL database with EF Core
+- Redis for caching and real-time job updates
 - Observability with OpenTelemetry and Serilog
 
 ## Architecture
@@ -28,12 +28,12 @@ Domain layer containing business entities, interfaces, DTOs, and domain logic. N
 - **Custom exceptions**: Domain exceptions inherit from `BaseAppException` with error codes and HTTP status codes
 
 **Structure:**
-- `Entities/` - Domain entities organized by domain (Financals, Jobs, Marketing, Torrents, Compliance)
+- `Entities/` - Domain entities organized by domain (Jobs, Torrents, Storage, Compliance)
 - `DTOs/` - Data transfer objects organized by domain
 - `Interfaces/` - Repository and service interfaces
 - `Specifications/` - Query specifications for complex database queries
 - `Exceptions/` - Custom exception classes
-- `Enums/` - Domain enumerations (UserRole, RegionCode, etc.)
+- `Enums/` - Domain enumerations (UserRole, StorageProviderType, JobStatus, etc.)
 
 ### TorreClou.Application
 Application/business logic layer. Contains services that orchestrate domain logic and infrastructure.
@@ -41,17 +41,17 @@ Application/business logic layer. Contains services that orchestrate domain logi
 **Key services:**
 - `IAuthService` - Google OAuth and JWT authentication
 - `ITorrentService` - Torrent file processing with MonoTorrent
-- `IPaymentBusinessService` - Payment workflow orchestration
-- `IWalletService` - Wallet balance and transaction management
-- `ITorrentQuoteService` - Pricing calculations for torrent storage
-- `IVoucherService` - Voucher/discount code management
-- `IPricingEngine` - Regional pricing and flash sale logic
+- `ITorrentAnalysisService` - Torrent analysis and file selection
+- `IJobService` - Job creation and management
+- `IStorageProfilesService` - Storage provider configuration
+- `IGoogleDriveAuthService` - Google Drive OAuth and token management
+- `ITorrentHealthService` - Torrent health monitoring
 - `ITrackerScraper` - UDP tracker scraping for torrent health
 
 **Structure:**
 - `Services/` - Business logic services
 - `Services/Torrent/` - Torrent-specific services
-- `Services/Billing/` - Billing-specific services
+- `Services/Storage/` - Storage provider services
 - `Extensions/` - Service registration extension methods
 
 ### TorreClou.Infrastructure
@@ -62,15 +62,16 @@ Infrastructure layer implementing interfaces from Core. Handles data persistence
 - **UnitOfWork pattern**: `IUnitOfWork` provides access to repositories and manages transactions
 - **Generic Repository**: `IGenericRepository<T>` for common CRUD operations with specification support
 - **UpdateAuditableEntitiesInterceptor**: Automatically sets `UpdatedAt` timestamps
-- **CoinremitterService**: Cryptocurrency payment gateway integration (TRX)
 - **TokenService**: JWT token generation and validation
+- **RedisStreamService**: Redis Streams for real-time job updates
+- **JobStatusService**: Background job status tracking with Hangfire
 
 **Structure:**
 - `Data/` - DbContext and UnitOfWork
 - `Repositories/` - Repository implementations
-- `Services/` - Infrastructure service implementations
+- `Services/` - Infrastructure service implementations (Redis, Job tracking, Health checks)
 - `Migrations/` - EF Core database migrations
-- `Settings/` - Configuration classes (CoinremitterSettings, etc.)
+- `Settings/` - Configuration classes
 - `Interceptors/` - EF Core interceptors
 - `Helpers/` - Utility classes
 
@@ -85,7 +86,7 @@ Web API layer built with ASP.NET Core. Entry point for HTTP requests.
 - Serilog structured logging
 
 **Structure:**
-- `Controllers/` - API endpoints (Auth, Torrents, Payments, Invoice, AdminPayments)
+- `Controllers/` - API endpoints (Auth, Torrents, Jobs, Storage, Health, Compliance)
 - `Middleware/` - Custom middleware (GlobalExceptionHandler)
 - `Extensions/` - Service registration extensions
 
@@ -97,7 +98,13 @@ Web API layer built with ASP.NET Core. Entry point for HTTP requests.
    - `AddIdentityServices()` - JWT authentication
 
 ### TorreClou.Worker
-Background worker service for asynchronous job processing (currently minimal implementation).
+Background worker service for torrent download processing using qBittorrent.
+
+### TorreClou.GoogleDrive.Worker
+Background worker service for Google Drive upload processing.
+
+### TorreClou.S3.Worker
+Background worker service for AWS S3 upload processing with resumable uploads.
 
 ## Development Commands
 
@@ -160,14 +167,15 @@ Configuration is managed via `appsettings.json` and `appsettings.Development.jso
 - `Jwt:Key` - JWT signing key (must be sufficiently long)
 - `Jwt:Issuer` - JWT issuer claim
 - `Jwt:Audience` - JWT audience claim
-- `Google:ClientId` - Google OAuth client ID
-- `Coinremitter:ApiKey` - Coinremitter API key
-- `Coinremitter:ApiPassword` - Coinremitter API password
-- `Coinremitter:WebhookUrl` - Webhook URL for payment notifications
+- `Google:ClientId` - Google OAuth client ID for login
+- `GoogleDrive:ClientId` - Google Drive API OAuth client ID
+- `GoogleDrive:ClientSecret` - Google Drive API OAuth client secret
+- `GoogleDrive:RedirectUri` - OAuth callback URL
+- `Redis:ConnectionString` - Redis connection string for caching and job streams
 
-**Note:** Never commit actual credentials. Use User Secrets for development:
+**Note:** Never commit actual credentials. Use environment variables or User Secrets for development:
 ```powershell
-dotnet user-secrets set "Jwt:Key" "your-secret-key" --project TorreClou.API
+dotnet user-secrets set "GoogleDrive:ClientSecret" "your-secret" --project TorreClou.API
 ```
 
 ## Important Patterns and Conventions
@@ -211,20 +219,20 @@ return Ok(result.Value);
 ## Database Schema
 
 The database uses PostgreSQL with the following key entities:
-- **User** - User accounts with OAuth, region, role, and balance calculation
-- **UserStorageProfile** - Storage provider credentials (JSONB column)
+- **User** - User accounts with Google OAuth, region, and role
+- **UserStorageProfile** - Storage provider credentials (Google Drive, AWS S3) with JSONB configuration
 - **RequestedFile** - Torrent metadata with unique InfoHash constraint
-- **WalletTransaction** - Financial transactions (deposits, payments)
-- **UserJob** - Background job tracking with selected file indices (array type)
-- **Invoice** - Billing invoices with pricing snapshot (JSONB)
-- **Deposit** - Cryptocurrency deposits via Coinremitter
-- **Voucher** - Discount/promotion codes with usage tracking
+- **UserJob** - Background job tracking with selected files (JSONB)
 - **UserStrike** - Compliance violations
+- **S3UploadProgress** - Resumable S3 upload state tracking
 
 ### Key Relationships
-- User → WalletTransactions (One-to-Many, Cascade delete)
-- User → UploadedTorrentFiles (One-to-Many)
+- User → UserStorageProfiles (One-to-Many)
+- User → UserJobs (One-to-Many)
+- User → RequestedFiles (One-to-Many)
 - User → Strikes (One-to-Many, Cascade delete)
+- UserJob → RequestedFile (Many-to-One)
+- UserJob → UserStorageProfile (Many-to-One)
 - RequestedFile.InfoHash is unique per user
 
 ## API Structure

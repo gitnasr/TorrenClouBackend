@@ -1,13 +1,13 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using TorreClou.Core.DTOs.Financal;
+using TorreClou.Core.DTOs.Torrents;
 using TorreClou.Core.Interfaces;
 
 namespace TorreClou.API.Controllers
 {
     [Route("api/torrents")]
     public class TorrentsController(
-        ITorrentQuoteService quoteService,
+        ITorrentAnalysisService analysisService,
         ITorrentService torrentService
     ) : BaseApiController
     {
@@ -22,13 +22,13 @@ namespace TorreClou.API.Controllers
             return HandleResult(result);
         }
 
-        [HttpPost("quote")]
+        [HttpPost("analyze")]
         [Authorize]
-        public async Task<IActionResult> GetQuote([FromForm] QuoteRequestDto request)
+        public async Task<IActionResult> AnalyzeTorrent([FromForm] AnalyzeTorrentRequestDto request)
         {
             using var stream = request.TorrentFile.OpenReadStream();
 
-            var result = await quoteService.GenerateQuoteAsync(request, UserId, stream);
+            var result = await analysisService.AnalyzeTorrentAsync(request, UserId, stream);
 
             return HandleResult(result);
         }

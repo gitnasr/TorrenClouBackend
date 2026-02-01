@@ -41,7 +41,8 @@ namespace TorreClou.Infrastructure.Services.Drive
                     return Result<string>.Failure("NO_REFRESH_TOKEN", "No refresh token available");
                 }
 
-                var refreshResult = await RefreshAccessTokenAsync(credentials.RefreshToken, cancellationToken);
+                // Use profile credentials if available (configure flow), otherwise use environment settings
+                var refreshResult = await RefreshAccessTokenAsync(credentials, cancellationToken);
                 if (refreshResult.IsFailure)
                 {
                     return Result<string>.Failure(refreshResult.Error.Code, refreshResult.Error.Message);
@@ -50,10 +51,10 @@ namespace TorreClou.Infrastructure.Services.Drive
                 // Update credentials with new token and expiration
                 credentials.AccessToken = refreshResult.Value.AccessToken;
                 credentials.ExpiresAt = DateTime.UtcNow.AddSeconds(refreshResult.Value.ExpiresIn).ToString("O");
-                
+
                 // Save back to profile
                 profile.CredentialsJson = JsonSerializer.Serialize(credentials);
-                
+
                 // Persist changes to database
                 await unitOfWork.Complete();
 
@@ -67,16 +68,26 @@ namespace TorreClou.Infrastructure.Services.Drive
             }
         }
 
-        public async Task<Result<(string AccessToken, int ExpiresIn)>> RefreshAccessTokenAsync(string refreshToken, CancellationToken cancellationToken = default)
+        public async Task<Result<(string AccessToken, int ExpiresIn)>> RefreshAccessTokenAsync(GoogleDriveCredentials credentials, CancellationToken cancellationToken = default)
         {
             try
             {
+                // Use profile credentials if available (from configure flow), otherwise fall back to settings
+                var clientId = !string.IsNullOrEmpty(credentials.ClientId) ? credentials.ClientId : _settings.ClientId;
+                var clientSecret = !string.IsNullOrEmpty(credentials.ClientSecret) ? credentials.ClientSecret : _settings.ClientSecret;
+
+                if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
+                {
+                    logger.LogError("No OAuth credentials available for token refresh. Profile credentials empty and no environment settings configured.");
+                    return Result<(string, int)>.Failure("NO_CREDENTIALS", "No OAuth credentials available for token refresh");
+                }
+
                 var httpClient = httpClientFactory.CreateClient();
                 var requestBody = new Dictionary<string, string>
                 {
-                    { "client_id", _settings.ClientId },
-                    { "client_secret", _settings.ClientSecret },
-                    { "refresh_token", refreshToken },
+                    { "client_id", clientId },
+                    { "client_secret", clientSecret },
+                    { "refresh_token", credentials.RefreshToken! },
                     { "grant_type", "refresh_token" }
                 };
 

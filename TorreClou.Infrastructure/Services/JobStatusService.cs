@@ -68,52 +68,6 @@ namespace TorreClou.Infrastructure.Services
                 job.Id, fromStatus, newStatus, source);
         }
 
-        /// <inheritdoc />
-        public async Task TransitionSyncStatusAsync(
-            Sync sync,
-            SyncStatus newStatus,
-            StatusChangeSource source,
-            string? errorMessage = null,
-            object? metadata = null)
-        {
-            var fromStatus = sync.Status;
-
-            // Skip if status hasn't changed (unless there's an error message to record)
-            if (fromStatus == newStatus && string.IsNullOrEmpty(errorMessage))
-            {
-                logger.LogDebug("Sync {SyncId} status unchanged at {Status}, skipping history entry", sync.Id, newStatus);
-                return;
-            }
-
-            // Create history entry
-            var historyEntry = new SyncStatusHistory
-            {
-                SyncId = sync.Id,
-                FromStatus = fromStatus,
-                ToStatus = newStatus,
-                Source = source,
-                ErrorMessage = errorMessage,
-                MetadataJson = metadata != null ? JsonSerializer.Serialize(metadata, JsonOptions) : null,
-                ChangedAt = DateTime.UtcNow
-            };
-
-            // Update sync status and error message
-            sync.Status = newStatus;
-            if (!string.IsNullOrEmpty(errorMessage))
-            {
-                sync.ErrorMessage = errorMessage;
-            }
-
-            // Add history entry
-            unitOfWork.Repository<SyncStatusHistory>().Add(historyEntry);
-
-            // Save changes
-            await unitOfWork.Complete();
-
-            logger.LogInformation(
-                "Sync {SyncId} transitioned from {FromStatus} to {ToStatus} | Source: {Source}",
-                sync.Id, fromStatus, newStatus, source);
-        }
 
         /// <inheritdoc />
         public async Task RecordInitialJobStatusAsync(UserJob job, object? metadata = null)
@@ -134,24 +88,6 @@ namespace TorreClou.Infrastructure.Services
             logger.LogDebug("Recorded initial status {Status} for Job {JobId}", job.Status, job.Id);
         }
 
-        /// <inheritdoc />
-        public async Task RecordInitialSyncStatusAsync(Sync sync, object? metadata = null)
-        {
-            var historyEntry = new SyncStatusHistory
-            {
-                SyncId = sync.Id,
-                FromStatus = null, // Initial status has no "from"
-                ToStatus = sync.Status,
-                Source = StatusChangeSource.System,
-                MetadataJson = metadata != null ? JsonSerializer.Serialize(metadata, JsonOptions) : null,
-                ChangedAt = sync.CreatedAt
-            };
-
-            unitOfWork.Repository<SyncStatusHistory>().Add(historyEntry);
-            await unitOfWork.Complete();
-
-            logger.LogDebug("Recorded initial status {Status} for Sync {SyncId}", sync.Status, sync.Id);
-        }
 
         /// <inheritdoc />
         public async Task<IReadOnlyList<JobTimelineEntryDto>> GetJobTimelineAsync(int jobId)
@@ -164,16 +100,6 @@ namespace TorreClou.Infrastructure.Services
             return MapToJobTimelineEntries(historyEntries);
         }
 
-        /// <inheritdoc />
-        public async Task<IReadOnlyList<SyncTimelineEntryDto>> GetSyncTimelineAsync(int syncId)
-        {
-            var spec = new BaseSpecification<SyncStatusHistory>(h => h.SyncId == syncId);
-            spec.AddOrderBy(h => h.ChangedAt);
-
-            var historyEntries = await unitOfWork.Repository<SyncStatusHistory>().ListAsync(spec);
-
-            return MapToSyncTimelineEntries(historyEntries);
-        }
 
         private static List<JobTimelineEntryDto> MapToJobTimelineEntries(IReadOnlyList<JobStatusHistory> entries)
         {
@@ -201,31 +127,6 @@ namespace TorreClou.Infrastructure.Services
             return result;
         }
 
-        private static List<SyncTimelineEntryDto> MapToSyncTimelineEntries(IReadOnlyList<SyncStatusHistory> entries)
-        {
-            var result = new List<SyncTimelineEntryDto>(entries.Count);
-            DateTime? previousTime = null;
-
-            foreach (var entry in entries)
-            {
-                result.Add(new SyncTimelineEntryDto
-                {
-                    FromStatus = entry.FromStatus,
-                    ToStatus = entry.ToStatus,
-                    Source = entry.Source,
-                    ErrorMessage = entry.ErrorMessage,
-                    MetadataJson = entry.MetadataJson,
-                    ChangedAt = entry.ChangedAt,
-                    DurationFromPrevious = previousTime.HasValue 
-                        ? entry.ChangedAt - previousTime.Value 
-                        : null
-                });
-
-                previousTime = entry.ChangedAt;
-            }
-
-            return result;
-        }
     }
 }
 

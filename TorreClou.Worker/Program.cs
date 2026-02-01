@@ -43,8 +43,6 @@ try
 
     // Worker Services
     builder.Services.AddHttpClient();
-    builder.Services.Configure<TorreClou.Infrastructure.Settings.BackblazeSettings>(
-        builder.Configuration.GetSection("Backblaze"));
     builder.Services.AddScoped<ITorrentDownloadJob, TorrentDownloadJob>();
     builder.Services.AddScoped<ITransferSpeedMetrics, TransferSpeedMetrics>();
     builder.Services.AddScoped<IJobStatusService, JobStatusService>();
