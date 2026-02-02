@@ -413,7 +413,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${loki_datasource}" },
-          "expr": "{app=\"torreclou\", service=~\"torreclou-worker|torreclou-googledrive-worker|torreclou-sync-worker\"} |~ \"(?i)(job|download|upload|transfer|torrent)\" | json | line_format \"{{.level}} | {{.service}} | {{.Message}}\"",
+          "expr": "{app=\"torreclou\", service=~\"torreclou-worker|torreclou-googledrive-worker|torreclou-s3-worker\"} |~ \"(?i)(job|download|upload|transfer|torrent)\" | json | line_format \"{{.level}} | {{.service}} | {{.Message}}\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -428,7 +428,7 @@
   "templating": {
     "list": [
       {
-        "current": { "selected": false, "text": "grafanacloud-logs", "value": "grafanacloud-logs" },
+        "current": { "selected": true, "text": "Loki", "value": "Loki" },
         "hide": 0,
         "includeAll": false,
         "label": "Loki",
@@ -443,7 +443,7 @@
         "type": "datasource"
       },
       {
-        "current": { "selected": false, "text": "grafanacloud-prom", "value": "grafanacloud-prom" },
+        "current": { "selected": true, "text": "Prometheus", "value": "Prometheus" },
         "hide": 0,
         "includeAll": false,
         "label": "Prometheus",

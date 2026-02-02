@@ -15,6 +15,10 @@ namespace TorreClou.API.Controllers.Storage
         /// Configure Google Drive with user-provided OAuth credentials.
         /// Returns authorization URL for user to complete OAuth flow.
         /// </summary>
+        /// <remarks>
+        /// Users must provide their own Google Cloud OAuth credentials (ClientId, ClientSecret, RedirectUri).
+        /// See docs/GOOGLE_DRIVE_SETUP.md for instructions on creating Google Cloud credentials.
+        /// </remarks>
         [HttpPost("configure")]
         public async Task<IActionResult> ConfigureGoogleDrive([FromBody] ConfigureGoogleDriveRequestDto request)
         {
@@ -24,21 +28,6 @@ namespace TorreClou.API.Controllers.Storage
                 return BadRequest(new { error = result.Error.Message, code = result.Error.Code });
 
             return Ok(new GoogleDriveAuthResponse { AuthorizationUrl = result.Value });
-        }
-
-        /// <summary>
-        /// Legacy endpoint - Connect Google Drive using environment credentials.
-        /// Prefer using POST /configure with user-provided credentials.
-        /// </summary>
-        [HttpGet("connect")]
-        public async Task<IActionResult> ConnectGoogleDrive([FromQuery] string? profileName = null)
-        {
-            var result = await googleDriveService.GetAuthorizationUrlAsync(UserId, profileName);
-
-            return Ok(new GoogleDriveAuthResponse
-            {
-                AuthorizationUrl = result
-            });
         }
 
         [HttpGet("callback")]

@@ -3,24 +3,21 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using TorreClou.Core.DTOs.Storage.GoogleDrive;
 using TorreClou.Core.Interfaces;
-using TorreClou.Core.Options;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Entities.Jobs;
 
 namespace TorreClou.Infrastructure.Services.Drive
 {
-    public  class GoogleDriveJobService(
-        IOptions<GoogleDriveSettings> settings,
+    // Google Drive credentials are configured per-user via API (stored in UserStorageProfile.CredentialsJson)
+    public class GoogleDriveJobService(
         IHttpClientFactory httpClientFactory,
         ILogger<GoogleDriveJobService> logger,
         IUploadProgressContext progressContext,
         IUnitOfWork unitOfWork,
         IRedisLockService redisLockService) : IGoogleDriveJobService
     {
-        private readonly GoogleDriveSettings _settings = settings.Value;
 
         // Upload chunk size: 10 MB (must be multiple of 256 KB per Google's requirements)
         private const int ChunkSize = 10 * 1024 * 1024;
@@ -72,15 +69,15 @@ namespace TorreClou.Infrastructure.Services.Drive
         {
             try
             {
-                // Use profile credentials if available (from configure flow), otherwise fall back to settings
-                var clientId = !string.IsNullOrEmpty(credentials.ClientId) ? credentials.ClientId : _settings.ClientId;
-                var clientSecret = !string.IsNullOrEmpty(credentials.ClientSecret) ? credentials.ClientSecret : _settings.ClientSecret;
-
-                if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
+                // Credentials must be present in profile (configured via /api/storage/gdrive/configure endpoint)
+                if (string.IsNullOrEmpty(credentials.ClientId) || string.IsNullOrEmpty(credentials.ClientSecret))
                 {
-                    logger.LogError("No OAuth credentials available for token refresh. Profile credentials empty and no environment settings configured.");
-                    return Result<(string, int)>.Failure("NO_CREDENTIALS", "No OAuth credentials available for token refresh");
+                    logger.LogError("Google Drive credentials not found in storage profile. User must configure via /api/storage/gdrive/configure endpoint.");
+                    return Result<(string, int)>.Failure("MISSING_CREDENTIALS", "Google Drive credentials not found in storage profile. Please reconfigure your Google Drive connection.");
                 }
+
+                var clientId = credentials.ClientId;
+                var clientSecret = credentials.ClientSecret;
 
                 var httpClient = httpClientFactory.CreateClient();
                 var requestBody = new Dictionary<string, string>

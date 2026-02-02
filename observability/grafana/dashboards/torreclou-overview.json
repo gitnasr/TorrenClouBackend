@@ -175,12 +175,12 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${loki_datasource}" },
-          "expr": "count_over_time({app=\"torreclou\", service=\"torreclou-sync-worker\"}[5m])",
-          "legendFormat": "Sync Worker",
+          "expr": "count_over_time({app=\"torreclou\", service=\"torreclou-s3-worker\"}[5m])",
+          "legendFormat": "S3 Worker",
           "refId": "A"
         }
       ],
-      "title": "Sync Worker",
+      "title": "S3 Worker",
       "type": "stat"
     },
     {
@@ -611,7 +611,7 @@
   "templating": {
     "list": [
       {
-        "current": { "selected": false, "text": "grafanacloud-logs", "value": "grafanacloud-logs" },
+        "current": { "selected": true, "text": "Loki", "value": "Loki" },
         "hide": 0,
         "includeAll": false,
         "label": "Loki",
@@ -626,7 +626,7 @@
         "type": "datasource"
       },
       {
-        "current": { "selected": false, "text": "grafanacloud-prom", "value": "grafanacloud-prom" },
+        "current": { "selected": true, "text": "Prometheus", "value": "Prometheus" },
         "hide": 0,
         "includeAll": false,
         "label": "Prometheus",

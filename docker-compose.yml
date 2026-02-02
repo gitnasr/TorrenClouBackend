@@ -5,6 +5,7 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: torrenclo_postgres
+    command: postgres -c max_connections=200
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-torrenclo}
       POSTGRES_USER: ${POSTGRES_USER:-torrenclo_user}
@@ -14,7 +15,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-torrenclo_user}" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-torrenclo_user} -d ${POSTGRES_DB:-torrenclo}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -51,8 +52,6 @@ services:
       - Jwt__Issuer=${JWT_ISSUER:-TorrenClou_API}
       - Jwt__Audience=${JWT_AUDIENCE:-TorrenClou_Client}
       - Google__ClientId=${GOOGLE_CLIENT_ID}
-      # Note: Google Drive credentials are now configured per-user via API
-      - GoogleDrive__FrontendUrl=${FRONTEND_URL:-http://localhost:3000}
       - Hangfire__DashboardPath=/hangfire
       - Hangfire__ServerName=api
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000}
@@ -76,6 +75,7 @@ services:
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB:-torrenclo};Username=${POSTGRES_USER:-torrenclo_user};Password=${POSTGRES_PASSWORD:-changeme}
       - Redis__ConnectionString=redis:6379
       - Hangfire__WorkerName=torrent-worker
+      - Hangfire__WorkerCount=${HANGFIRE_WORKER_COUNT:-10}
       - Hangfire__Queues=torrent,default
       - MAX_CONCURRENT_JOBS=${MAX_CONCURRENT_JOBS:-3}
       - TORRENT_DOWNLOAD_PATH=/app/downloads
@@ -98,8 +98,8 @@ services:
       - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB:-torrenclo};Username=${POSTGRES_USER:-torrenclo_user};Password=${POSTGRES_PASSWORD:-changeme}
       - Redis__ConnectionString=redis:6379
-      # Note: Google Drive credentials are now configured per-user (stored in UserStorageProfile)
       - Hangfire__WorkerName=googledrive-worker
+      - Hangfire__WorkerCount=${HANGFIRE_WORKER_COUNT:-10}
       - Hangfire__Queues=googledrive,default
       - MAX_CONCURRENT_UPLOADS=${MAX_CONCURRENT_GOOGLEDRIVE_UPLOADS:-2}
     depends_on:
@@ -122,6 +122,7 @@ services:
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB:-torrenclo};Username=${POSTGRES_USER:-torrenclo_user};Password=${POSTGRES_PASSWORD:-changeme}
       - Redis__ConnectionString=redis:6379
       - Hangfire__WorkerName=s3-worker
+      - Hangfire__WorkerCount=${HANGFIRE_WORKER_COUNT:-10}
       - Hangfire__Queues=s3,default
       - MAX_CONCURRENT_UPLOADS=${MAX_CONCURRENT_S3_UPLOADS:-2}
     depends_on:
@@ -172,6 +173,7 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
       - loki

@@ -5,18 +5,12 @@ using TorreClou.Core.Shared;
 
 namespace TorreClou.Application.Services.Google_Drive
 {
+    /// <summary>
+    /// Google Drive service implementation.
+    /// Credentials are configured per-user via API (not environment variables).
+    /// </summary>
     public class GoogleDriveService(IGoogleDriveAuthService googleDriveAuthService) : IGoogleDriveService
     {
-        public async Task<string> GetAuthorizationUrlAsync(int userId, string? profileName = null)
-        {
-            var result = await googleDriveAuthService.GetAuthorizationUrlAsync(userId, profileName);
-            if (result.IsFailure)
-            {
-                throw new UnauthorizedAccessException($"Failed to get authorization URL: {result.Error}");
-            }
-            return result.Value;
-        }
-
         public async Task<Result<string>> ConfigureAndGetAuthUrlAsync(int userId, ConfigureGoogleDriveRequestDto request)
         {
             return await googleDriveAuthService.ConfigureAndGetAuthUrlAsync(userId, request);

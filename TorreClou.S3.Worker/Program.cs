@@ -35,7 +35,7 @@ try
 
     // Hangfire with S3 queue
     builder.Services.AddSharedHangfireBase(builder.Configuration);
-    builder.Services.AddSharedHangfireServer(queues: ["s3", "default"]);
+    builder.Services.AddSharedHangfireServer(builder.Configuration, queues: ["s3", "default"]);
 
     // S3-Specific Services (NO BackblazeSettings - all credentials from UserStorageProfile)
     builder.Services.AddScoped<IS3JobService, S3JobService>();

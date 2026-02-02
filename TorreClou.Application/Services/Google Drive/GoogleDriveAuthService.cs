@@ -2,14 +2,12 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Web;
-using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
-using TorreClou.Core.Options;
 using TorreClou.Core.DTOs.Storage.Google_Drive;
 using TorreClou.Core.DTOs.Storage.GoogleDrive;
 
@@ -17,73 +15,11 @@ namespace TorreClou.Application.Services
 {
     public class GoogleDriveAuthService(
         IUnitOfWork unitOfWork,
-        IOptions<GoogleDriveSettings> settings,
         IHttpClientFactory httpClientFactory,
         ILogger<GoogleDriveAuthService> logger,
         IRedisCacheService redisCache) : IGoogleDriveAuthService
     {
-        private readonly GoogleDriveSettings _settings = settings.Value;
-        private const string RedisKeyPrefix = "oauth:state:";
         private const string RedisKeyPrefixConfigure = "oauth:gdrive:state:";
-
-        public async Task<Result<string>> GetAuthorizationUrlAsync(int userId, string? profileName = null)
-        {
-            try
-            {
-                // Validate profile name if provided
-                if (!string.IsNullOrWhiteSpace(profileName))
-                {
-                    var validationResult = ValidateProfileName(profileName);
-                    if (validationResult.IsFailure)
-                    {
-                        return Result<string>.Failure(validationResult.Error.Code, validationResult.Error.Message);
-                    }
-                    profileName = profileName.Trim();
-                }
-
-                // Generate state parameter (userId + nonce for security)
-                var nonce = Guid.NewGuid().ToString("N");
-                var state = $"{userId}:{nonce}";
-                var stateHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(state)));
-
-                // Store state in Redis with expiration (5 minutes)
-                var oauthState = new OAuthState
-                {
-                    UserId = userId,
-                    Nonce = nonce,
-                    ProfileName = profileName,
-                    ExpiresAt = DateTime.UtcNow.AddMinutes(5)
-                };
-
-                var redisKey = $"{RedisKeyPrefix}{stateHash}";
-                var jsonValue = JsonSerializer.Serialize(oauthState);
-                
-                await redisCache.SetAsync(redisKey, jsonValue, TimeSpan.FromMinutes(5));
-              
-           
-
-                // Build OAuth URL
-                var scopes = string.Join(" ", _settings.Scopes);
-                var redirectUri = HttpUtility.UrlEncode(_settings.RedirectUri);
-                var encodedState = HttpUtility.UrlEncode(stateHash);
-
-                var authUrl = $"https://accounts.google.com/o/oauth2/v2/auth?" +
-                    $"client_id={_settings.ClientId}&" +
-                    $"redirect_uri={redirectUri}&" +
-                    $"response_type=code&" +
-                    $"scope={HttpUtility.UrlEncode(scopes)}&" +
-                    $"access_type=offline&" +
-                    $"prompt=consent&" +
-                    $"state={encodedState}";
-
-                return Result.Success(authUrl);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error generating authorization URL for user {UserId}", userId);
-                return Result<string>.Failure("AUTH_URL_ERROR", "Failed to generate authorization URL");
-            }
-        }
 
         public async Task<Result<string>> ConfigureAndGetAuthUrlAsync(int userId, ConfigureGoogleDriveRequestDto request)
         {
@@ -162,31 +98,16 @@ namespace TorreClou.Application.Services
         {
             try
             {
-                // Try new configure flow first, then legacy flow
+                // Get OAuth state from Redis (user must use /configure endpoint)
                 var configureKey = $"{RedisKeyPrefixConfigure}{state}";
-                var legacyKey = $"{RedisKeyPrefix}{state}";
-
-                OAuthState? storedState = null;
-                bool isConfigureFlow = false;
-
-                // Try configure flow first (user-provided credentials)
                 var stateJson = await redisCache.GetAndDeleteAsync(configureKey);
-                if (!string.IsNullOrEmpty(stateJson))
-                {
-                    isConfigureFlow = true;
-                }
-                else
-                {
-                    // Try legacy flow (environment credentials)
-                    stateJson = await redisCache.GetAndDeleteAsync(legacyKey);
-                }
 
                 if (string.IsNullOrEmpty(stateJson))
                 {
-                    return Result<int>.Failure("INVALID_STATE", "Invalid or expired OAuth state");
+                    return Result<int>.Failure("INVALID_STATE", "Invalid or expired OAuth state. Please use the /api/storage/gdrive/configure endpoint to connect Google Drive.");
                 }
 
-                storedState = JsonSerializer.Deserialize<OAuthState>(stateJson);
+                var storedState = JsonSerializer.Deserialize<OAuthState>(stateJson);
 
                 if (storedState == null)
                 {
@@ -199,28 +120,21 @@ namespace TorreClou.Application.Services
                     return Result<int>.Failure("INVALID_STATE", "Expired OAuth state");
                 }
 
+                // Validate credentials are present in state (required - no env fallback)
+                if (string.IsNullOrEmpty(storedState.ClientId) || string.IsNullOrEmpty(storedState.ClientSecret) || string.IsNullOrEmpty(storedState.RedirectUri))
+                {
+                    return Result<int>.Failure("MISSING_CREDENTIALS", "OAuth credentials not found. Please use the /api/storage/gdrive/configure endpoint.");
+                }
+
                 // Extract userId and profileName from validated state
                 var userId = storedState.UserId;
                 var profileName = storedState.ProfileName;
 
-                // Determine which credentials to use for token exchange
-                string clientId, clientSecret, redirectUri;
-                if (isConfigureFlow && !string.IsNullOrEmpty(storedState.ClientId))
-                {
-                    // Use user-provided credentials from configure flow
-                    clientId = storedState.ClientId;
-                    clientSecret = storedState.ClientSecret;
-                    redirectUri = storedState.RedirectUri;
-                    logger.LogInformation("Using user-provided credentials for token exchange (user {UserId})", userId);
-                }
-                else
-                {
-                    // Use environment credentials (legacy flow)
-                    clientId = _settings.ClientId;
-                    clientSecret = _settings.ClientSecret;
-                    redirectUri = _settings.RedirectUri;
-                    logger.LogInformation("Using environment credentials for token exchange (user {UserId})", userId);
-                }
+                // Use user-provided credentials from configure flow
+                var clientId = storedState.ClientId;
+                var clientSecret = storedState.ClientSecret;
+                var redirectUri = storedState.RedirectUri;
+                logger.LogInformation("Using user-provided credentials for token exchange (user {UserId})", userId);
 
                 // Exchange authorization code for tokens
                 var tokenResponse = await ExchangeCodeForTokensAsync(code, clientId, clientSecret, redirectUri);
@@ -335,13 +249,13 @@ namespace TorreClou.Application.Services
                     unitOfWork.Repository<UserStorageProfile>().Add(profile);
                 }
 
-                // Store/update tokens in CredentialsJson (include OAuth app credentials for configure flow)
+                // Store/update tokens in CredentialsJson (includes OAuth app credentials from user)
                 var credentials = new GoogleDriveCredentials
                 {
-                    // OAuth app credentials (only for configure flow)
-                    ClientId = isConfigureFlow ? clientId : string.Empty,
-                    ClientSecret = isConfigureFlow ? clientSecret : string.Empty,
-                    RedirectUri = isConfigureFlow ? redirectUri : string.Empty,
+                    // OAuth app credentials (user-provided via /configure endpoint)
+                    ClientId = clientId,
+                    ClientSecret = clientSecret,
+                    RedirectUri = redirectUri,
                     // OAuth tokens from Google
                     AccessToken = tokenResponse.AccessToken,
                     RefreshToken = tokenResponse.RefreshToken,
@@ -357,7 +271,7 @@ namespace TorreClou.Application.Services
                 }
                 else
                 {
-                    logger.LogInformation("Credentials saved successfully for profile {ProfileId} with refresh token present. Configure flow: {IsConfigureFlow}", profile.Id, isConfigureFlow);
+                    logger.LogInformation("Credentials saved successfully for profile {ProfileId} with refresh token present.", profile.Id);
                 }
 
                 // If this is the first profile or user explicitly wants it as default, set it
@@ -366,7 +280,7 @@ namespace TorreClou.Application.Services
                 );
                 var hasDefault = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(defaultProfileSpec) != null;
 
-                if (!hasDefault || (isConfigureFlow && storedState.SetAsDefault))
+                if (!hasDefault || storedState.SetAsDefault)
                 {
                     // Unset other defaults if setting this one as default
                     if (storedState.SetAsDefault && hasDefault)

@@ -8,7 +8,6 @@ using TorreClou.Infrastructure.Interceptors;
 using TorreClou.Infrastructure.Repositories;
 using TorreClou.Infrastructure.Services;
 using TorreClou.Infrastructure.Settings;
-using TorreClou.Core.Options;
 using TorreClou.Application.Services.Google_Drive;
 using TorreClou.Infrastructure.Services.Redis;
 using TorreClou.Infrastructure.Services.Drive;
@@ -37,8 +36,7 @@ namespace TorreClou.Infrastructure.Extensions
 
             services.AddScoped<ITokenService, TokenService>();
 
-            // Google Drive Services
-            services.Configure<GoogleDriveSettings>(configuration.GetSection("GoogleDrive"));
+            // Google Drive Services (credentials configured per-user via API)
             services.AddScoped<IGoogleDriveJobService, GoogleDriveJobService>();
             services.AddScoped<IGoogleDriveService, GoogleDriveService>();
 

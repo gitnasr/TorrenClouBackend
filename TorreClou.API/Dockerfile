@@ -10,7 +10,7 @@ COPY TorreClou.Infrastructure/TorreClou.Infrastructure.csproj TorreClou.Infrastr
 COPY TorreClou.API/TorreClou.API.csproj TorreClou.API/
 COPY TorreClou.Worker/TorreClou.Worker.csproj TorreClou.Worker/
 COPY TorreClou.GoogleDrive.Worker/TorreClou.GoogleDrive.Worker.csproj TorreClou.GoogleDrive.Worker/
-COPY TorreClou.Sync.Worker/TorreClou.Sync.Worker.csproj TorreClou.Sync.Worker/
+COPY TorreClou.S3.Worker/TorreClou.S3.Worker.csproj TorreClou.S3.Worker/
 
 # Restore dependencies
 RUN dotnet restore TorreClou.sln

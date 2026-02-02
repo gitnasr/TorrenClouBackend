@@ -39,7 +39,7 @@ try
         builder.Services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
         new LoggerFactory().CreateLogger<JobStateSyncFilter>()
     ));
-    builder.Services.AddSharedHangfireServer(queues: ["torrents", "default"]);
+    builder.Services.AddSharedHangfireServer(builder.Configuration, queues: ["torrents", "default"]);
 
     // Worker Services
     builder.Services.AddHttpClient();

@@ -226,12 +226,15 @@ namespace TorreClou.Infrastructure.Extensions
         /// <summary>
         /// Configures Hangfire Server for Workers
         /// </summary>
-        public static IServiceCollection AddSharedHangfireServer(this IServiceCollection services, string[] queues)
+        public static IServiceCollection AddSharedHangfireServer(this IServiceCollection services, IConfiguration configuration, string[] queues)
         {
+            // Get worker count from configuration, default to 10 to avoid connection exhaustion
+            var workerCount = configuration.GetValue<int>("Hangfire:WorkerCount", 10);
+
             services.AddHangfireServer(options =>
             {
-                options.WorkerCount = 50; // Reduced from 100 to reduce Redis connection contention
-                options.ServerTimeout = TimeSpan.FromMinutes(2); // Reduced from 5 minutes
+                options.WorkerCount = workerCount;
+                options.ServerTimeout = TimeSpan.FromMinutes(2);
                 options.HeartbeatInterval = TimeSpan.FromSeconds(30);
                 options.SchedulePollingInterval = TimeSpan.FromSeconds(10);
                 options.Queues = queues;
