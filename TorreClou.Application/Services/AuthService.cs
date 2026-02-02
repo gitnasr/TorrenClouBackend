@@ -2,6 +2,7 @@
 using TorreClou.Core.DTOs.Auth;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
+using TorreClou.Core.Specifications;
 
 namespace TorreClou.Application.Services
 {
@@ -9,13 +10,16 @@ namespace TorreClou.Application.Services
     {
         private readonly IConfiguration _configuration;
         private readonly ITokenService _tokenService;
+        private readonly IUnitOfWork _unitOfWork;
 
         public AuthService(
             IConfiguration configuration,
-            ITokenService tokenService)
+            ITokenService tokenService,
+            IUnitOfWork unitOfWork)
         {
             _configuration = configuration;
             _tokenService = tokenService;
+            _unitOfWork = unitOfWork;
         }
 
         public async Task<Result<AuthResponseDto>> LoginAsync(string email, string password)
@@ -39,13 +43,20 @@ namespace TorreClou.Application.Services
                 return Result<AuthResponseDto>.Failure("INVALID_CREDENTIALS", "Invalid email or password");
             }
 
-            // Create a dummy user object for token generation
-            var user = new Core.Entities.User
+            // Get or create user in database
+            var spec = new BaseSpecification<Core.Entities.User>(u => u.Email.ToLower() == adminEmail.ToLower());
+            var user = await _unitOfWork.Repository<Core.Entities.User>().GetEntityWithSpec(spec);
+
+            if (user == null)
             {
-                Id = 1,
-                Email = adminEmail,
-                FullName = adminName
-            };
+                user = new Core.Entities.User
+                {
+                    Email = adminEmail,
+                    FullName = adminName
+                };
+                _unitOfWork.Repository<Core.Entities.User>().Add(user);
+                await _unitOfWork.Complete();
+            }
 
             var token = _tokenService.CreateToken(user);
 

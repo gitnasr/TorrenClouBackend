@@ -132,6 +132,7 @@ namespace TorreClou.Application.Services
                 BytesDownloaded = job.BytesDownloaded,
                 TotalBytes = job.TotalBytes,
                 SelectedFilePaths = job.SelectedFilePaths,
+                CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt
             }).ToList();
 
@@ -182,6 +183,7 @@ namespace TorreClou.Application.Services
                 BytesDownloaded = job.BytesDownloaded,
                 TotalBytes = job.TotalBytes,
                 SelectedFilePaths = job.SelectedFilePaths,
+                CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt,
                 Timeline = timeline.ToList()
             });

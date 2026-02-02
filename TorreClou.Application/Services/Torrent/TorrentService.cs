@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using TorreClou.Core.DTOs.Torrents;
 using TorreClou.Core.Entities;
 using TorreClou.Core.Interfaces;
@@ -10,9 +11,11 @@ namespace TorreClou.Application.Services.Torrent
     public class TorrentService(
         IUnitOfWork unitOfWork,
         ITrackerScraper trackerScraper,
-        ITorrentHealthService torrentHealthService) : ITorrentService
+        ITorrentHealthService torrentHealthService,
+        IConfiguration configuration) : ITorrentService
     {
-        // Ideally move this to configuration
+        private readonly string _downloadPath = configuration["TORRENT_DOWNLOAD_PATH"] ?? "/app/downloads";
+
         private static readonly string[] FallbackTrackers =
         [
             "udp://tracker.openbittorrent.com:80",
@@ -168,7 +171,24 @@ namespace TorreClou.Application.Services.Torrent
             // Note: We only set UploadedByUserId (foreign key), not the navigation property
             // EF Core will use the foreign key value to establish the relationship
 
-            // Store torrent metadata in database only
+            // Save torrent file to local storage
+            string? localPath = null;
+            if (fileStream != null)
+            {
+                var torrentsDir = Path.Combine(_downloadPath, "torrents");
+                Directory.CreateDirectory(torrentsDir);
+
+                var fileName = $"{torrent.InfoHash}.torrent";
+                localPath = Path.Combine(torrentsDir, fileName);
+
+                if (fileStream.CanSeek)
+                    fileStream.Position = 0;
+
+                await using var fs = File.Create(localPath);
+                await fileStream.CopyToAsync(fs);
+            }
+
+            // Store torrent metadata in database
             var newTorrentFile = new RequestedFile
             {
                 InfoHash = torrent.InfoHash,
@@ -177,6 +197,7 @@ namespace TorreClou.Application.Services.Torrent
                 Files = torrent.Files.Select(f => f.Path).ToArray(),
                 UploadedByUserId = userId,
                 FileType = "Torrent",
+                DirectUrl = localPath
             };
 
             unitOfWork.Repository<RequestedFile>().Add(newTorrentFile);

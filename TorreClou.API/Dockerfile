@@ -33,6 +33,9 @@ WORKDIR /app
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
+# Create downloads mount point
+RUN mkdir -p /app/downloads
+
 # Copy published output
 COPY --from=build /app/publish .
 

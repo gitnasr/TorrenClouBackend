@@ -29,8 +29,8 @@ RUN dotnet publish TorreClou.GoogleDrive.Worker.csproj -c Release --no-restore -
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app
 
-# Create temp directories (will be mounted to external storage)
-RUN mkdir -p /app/tmp /app/tmp/bundle /app/logs /app/data
+# Create temp directories and downloads mount point
+RUN mkdir -p /app/tmp /app/tmp/bundle /app/logs /app/data /app/downloads
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser

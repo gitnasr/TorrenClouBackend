@@ -226,26 +226,35 @@ namespace TorreClou.Worker.Services
 
         private async Task<Torrent?> DownloadTorrentFileAsync(UserJob job, CancellationToken cancellationToken)
         {
-            if (string.IsNullOrEmpty(job.RequestFile?.DirectUrl))
+            var path = job.RequestFile?.DirectUrl;
+            if (string.IsNullOrEmpty(path))
             {
-                Logger.LogError("{LogPrefix} No torrent URL | JobId: {JobId}", LogPrefix, job.Id);
+                Logger.LogError("{LogPrefix} No torrent path | JobId: {JobId}", LogPrefix, job.Id);
                 return null;
             }
 
             try
             {
-                Logger.LogInformation("{LogPrefix} Downloading torrent file | JobId: {JobId} | Url: {Url}",
-                    LogPrefix, job.Id, job.RequestFile.DirectUrl);
+                // Check if it's a local file path
+                if (File.Exists(path))
+                {
+                    Logger.LogInformation("{LogPrefix} Loading torrent from local file | JobId: {JobId} | Path: {Path}",
+                        LogPrefix, job.Id, path);
+                    return await Torrent.LoadAsync(path);
+                }
 
+                // Fallback to HTTP for backwards compatibility
+                Logger.LogInformation("{LogPrefix} Downloading torrent file | JobId: {JobId} | Url: {Url}",
+                    LogPrefix, job.Id, path);
                 var httpClient = httpClientFactory.CreateClient();
-                var torrentBytes = await httpClient.GetByteArrayAsync(job.RequestFile.DirectUrl, cancellationToken);
+                var torrentBytes = await httpClient.GetByteArrayAsync(path, cancellationToken);
 
                 using var stream = new MemoryStream(torrentBytes);
                 return await Torrent.LoadAsync(stream);
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "{LogPrefix} Failed to download torrent file | JobId: {JobId}", LogPrefix, job.Id);
+                Logger.LogError(ex, "{LogPrefix} Failed to load torrent file | JobId: {JobId}", LogPrefix, job.Id);
                 return null;
             }
         }

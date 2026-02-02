@@ -26,6 +26,35 @@ namespace TorreClou.Infrastructure.Data
         // --- Status History (Timeline) ---
         public DbSet<JobStatusHistory> JobStatusHistories { get; set; }
 
+        public override int SaveChanges()
+        {
+            SetTimestamps();
+            return base.SaveChanges();
+        }
+
+        public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            SetTimestamps();
+            return await base.SaveChangesAsync(cancellationToken);
+        }
+
+        private void SetTimestamps()
+        {
+            var entries = ChangeTracker.Entries<BaseEntity>();
+
+            foreach (var entry in entries)
+            {
+                if (entry.State == EntityState.Added)
+                {
+                    entry.Entity.CreatedAt = DateTime.UtcNow;
+                }
+                else if (entry.State == EntityState.Modified)
+                {
+                    entry.Entity.UpdatedAt = DateTime.UtcNow;
+                }
+            }
+        }
+
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);

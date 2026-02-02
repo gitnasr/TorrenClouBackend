@@ -130,6 +130,14 @@ namespace TorreClou.Application.Services
                 var userId = storedState.UserId;
                 var profileName = storedState.ProfileName;
 
+                // Verify the user exists before creating a storage profile
+                var user = await unitOfWork.Repository<Core.Entities.User>().GetByIdAsync(userId);
+                if (user == null)
+                {
+                    logger.LogWarning("OAuth callback attempted for non-existent user {UserId}", userId);
+                    return Result<int>.Failure("USER_NOT_FOUND", "User not found. Please log in and try again.");
+                }
+
                 // Use user-provided credentials from configure flow
                 var clientId = storedState.ClientId;
                 var clientSecret = storedState.ClientSecret;
