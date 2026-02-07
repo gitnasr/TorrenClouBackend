@@ -2,14 +2,12 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TorreClou.Core.DTOs.Storage;
 using TorreClou.Core.Interfaces;
-using TorreClou.Core.Shared;
 
 namespace TorreClou.API.Controllers.Storage
 {
     [Authorize]
-    [ApiController]
     [Route("api/storage")]
-    public class StorageProviderController : ControllerBase
+    public class StorageProviderController : BaseApiController
     {
         private readonly IStorageProfilesService _storageProfilesService;
         private readonly ILogger<StorageProviderController> _logger;
@@ -30,12 +28,10 @@ namespace TorreClou.API.Controllers.Storage
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> ConfigureS3Async([FromBody] ConfigureS3RequestDto request)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? User.FindFirst("userId")?.Value);
-            
-            _logger.LogInformation("Configure S3 storage requested | UserId: {UserId}", userId);
+            _logger.LogInformation("Configure S3 storage requested | UserId: {UserId}", UserId);
 
             var result = await _storageProfilesService.ConfigureS3StorageAsync(
-                userId,
+                UserId,
                 request.ProfileName,
                 request.S3Endpoint,
                 request.S3AccessKey,
@@ -47,12 +43,12 @@ namespace TorreClou.API.Controllers.Storage
             if (result.IsFailure)
             {
                 _logger.LogWarning("S3 configuration failed | UserId: {UserId} | Error: {Error}",
-                    userId, result.Error.Message);
+                    UserId, result.Error.Message);
                 return BadRequest(new { error = result.Error.Message });
             }
 
             _logger.LogInformation("S3 storage configured successfully | ProfileId: {ProfileId} | UserId: {UserId}",
-                result.Value.StorageProfileId, userId);
+                result.Value.StorageProfileId, UserId);
 
             return Ok(result.Value);
         }
@@ -64,11 +60,9 @@ namespace TorreClou.API.Controllers.Storage
         [ProducesResponseType(typeof(StorageProvidersListDto), StatusCodes.Status200OK)]
         public async Task<IActionResult> GetProvidersAsync()
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? User.FindFirst("userId")?.Value ?? "0");
-            
-            _logger.LogDebug("Get storage providers requested | UserId: {UserId}", userId);
+            _logger.LogDebug("Get storage providers requested | UserId: {UserId}", UserId);
 
-            var result = await _storageProfilesService.GetUserStorageProvidersAsync(userId);
+            var result = await _storageProfilesService.GetUserStorageProvidersAsync(UserId);
 
             if (result.IsFailure)
             {
@@ -86,22 +80,20 @@ namespace TorreClou.API.Controllers.Storage
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> DeleteProviderAsync(int profileId)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? User.FindFirst("userId")?.Value ?? "0");
-            
             _logger.LogInformation("Delete storage provider requested | ProfileId: {ProfileId} | UserId: {UserId}",
-                profileId, userId);
+                profileId, UserId);
 
-            var result = await _storageProfilesService.DeleteStorageProfileAsync(userId, profileId);
+            var result = await _storageProfilesService.DeleteStorageProfileAsync(UserId, profileId);
 
             if (result.IsFailure)
             {
                 _logger.LogWarning("Storage provider deletion failed | ProfileId: {ProfileId} | UserId: {UserId} | Error: {Error}",
-                    profileId, userId, result.Error.Message);
+                    profileId, UserId, result.Error.Message);
                 return NotFound(new { error = result.Error.Message });
             }
 
             _logger.LogInformation("Storage provider deleted successfully | ProfileId: {ProfileId} | UserId: {UserId}",
-                profileId, userId);
+                profileId, UserId);
 
             return Ok(new { success = true, message = "Storage provider removed" });
         }
