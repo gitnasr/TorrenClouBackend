@@ -1,5 +1,7 @@
+using Microsoft.Extensions.Configuration;
 using TorreClou.Core.DTOs.Torrents;
 using TorreClou.Core.Entities;
+using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
@@ -10,9 +12,11 @@ namespace TorreClou.Application.Services.Torrent
     public class TorrentService(
         IUnitOfWork unitOfWork,
         ITrackerScraper trackerScraper,
-        IBlobStorageService blobStorageService, ITorrentHealthService torrentHealthService) : ITorrentService
+        ITorrentHealthService torrentHealthService,
+        IConfiguration configuration) : ITorrentService
     {
-        // Ideally move this to configuration
+        private readonly string _downloadPath = configuration["TORRENT_DOWNLOAD_PATH"] ?? "/app/downloads";
+
         private static readonly string[] FallbackTrackers =
         [
             "udp://tracker.openbittorrent.com:80",
@@ -47,18 +51,15 @@ namespace TorreClou.Application.Services.Torrent
 
         ];
 
-        public async Task<Result<TorrentInfoDto>> GetTorrentInfoFromTorrentFileAsync(Stream fileStream)
+        public Result<TorrentInfoDto> ParseTorrentFile(Stream fileStream)
         {
             try
             {
-                // Ensure stream is at start
                 if (fileStream.CanSeek && fileStream.Position != 0) fileStream.Position = 0;
 
                 var torrent = MonoTorrent.Torrent.Load(fileStream);
 
-                // 1. Extract Trackers (Clean LINQ)
                 var trackers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
                 if (torrent.AnnounceUrls != null)
                 {
                     foreach (var tier in torrent.AnnounceUrls)
@@ -70,31 +71,22 @@ namespace TorreClou.Application.Services.Torrent
                     }
                 }
 
-                // Filter for UDP only (for scraper compatibility)
                 var udpTrackers = trackers
                     .Where(t => t.StartsWith("udp://", StringComparison.OrdinalIgnoreCase))
                     .ToList();
 
-                // 2. Validate Hash
                 var hash = torrent.InfoHashes.V1?.ToHex();
                 if (string.IsNullOrEmpty(hash))
                 {
-                    return Result<TorrentInfoDto>.Failure("V2_ONLY_NOT_SUPPORTED",
+                    return Result<TorrentInfoDto>.Failure(ErrorCode.V2OnlyNotSupported,
                         "This torrent has no v1 (SHA1) hash. System currently requires v1 support.");
                 }
 
-                // 3. Fallback Trackers
                 if (udpTrackers.Count == 0)
                 {
                     udpTrackers.AddRange(FallbackTrackers);
                 }
 
-                // 4. Scrape Health (Ideally with short timeout)
-                // We pass the hash and list to the scraper service
-                var scrape = await trackerScraper.GetScrapeResultsAsync(hash, udpTrackers);
-                var health = torrentHealthService.Compute(scrape);
-                var healthMultiplier = 1 + (1 - health.HealthScore);
-                // 5. Build DTO
                 var dto = new TorrentInfoDto
                 {
                     Name = torrent.Name,
@@ -106,19 +98,39 @@ namespace TorreClou.Application.Services.Torrent
                         Index = index,
                         Path = f.Path,
                         Size = f.Length
-                    })],
-                    HealthScore = health.HealthScore,
-                    HealthMultiplier = healthMultiplier,
-                    Health = health,
-                    ScrapeResult = scrape
+                    })]
                 };
 
                 return Result.Success(dto);
             }
             catch (Exception ex)
             {
-                return Result<TorrentInfoDto>.Failure("INVALID_TORRENT", $"Failed to parse torrent file: {ex.Message}");
+                return Result<TorrentInfoDto>.Failure(ErrorCode.InvalidTorrent, $"Failed to parse torrent file: {ex.Message}");
             }
+        }
+
+        public async Task<Result<TorrentInfoDto>> EnrichWithHealthAsync(TorrentInfoDto torrentInfo)
+        {
+            var scrape = await trackerScraper.GetScrapeResultsAsync(torrentInfo.InfoHash, torrentInfo.Trackers);
+            var health = torrentHealthService.Compute(scrape);
+            var healthMultiplier = 1 + (1 - health.HealthScore);
+
+            return Result.Success(torrentInfo with
+            {
+                HealthScore = health.HealthScore,
+                HealthMultiplier = healthMultiplier,
+                Health = health,
+                ScrapeResult = scrape
+            });
+        }
+
+        public async Task<Result<TorrentInfoDto>> GetTorrentInfoFromTorrentFileAsync(Stream fileStream)
+        {
+            var parseResult = ParseTorrentFile(fileStream);
+            if (parseResult.IsFailure)
+                return parseResult;
+
+            return await EnrichWithHealthAsync(parseResult.Value);
         }
 
         public async Task<Result<RequestedFile>> FindOrCreateTorrentFile(TorrentInfoDto torrent, int userId, Stream? fileStream = null)
@@ -127,26 +139,26 @@ namespace TorreClou.Application.Services.Torrent
             var user = await unitOfWork.Repository<User>().GetByIdAsync(userId);
             if (user == null)
             {
-                return Result<RequestedFile>.Failure("USER_NOT_FOUND", 
+                return Result<RequestedFile>.Failure(ErrorCode.UserNotFound,
                     $"User with ID {userId} does not exist. Cannot create RequestedFile.");
             }
 
             // Validate required fields
             if (string.IsNullOrWhiteSpace(torrent.InfoHash))
             {
-                return Result<RequestedFile>.Failure("INVALID_INFOHASH", 
+                return Result<RequestedFile>.Failure(ErrorCode.InvalidInfoHash,
                     "InfoHash is required and cannot be empty. Cannot create or find RequestedFile.");
             }
 
             if (string.IsNullOrWhiteSpace(torrent.Name))
             {
-                return Result<RequestedFile>.Failure("INVALID_FILENAME", 
+                return Result<RequestedFile>.Failure(ErrorCode.InvalidFileName,
                     "FileName is required and cannot be empty. Cannot create RequestedFile.");
             }
 
             if (torrent.TotalSize <= 0)
             {
-                return Result<RequestedFile>.Failure("INVALID_FILESIZE", 
+                return Result<RequestedFile>.Failure(ErrorCode.InvalidFileSize,
                     "FileSize must be greater than zero. Cannot create RequestedFile.");
             }
 
@@ -160,17 +172,7 @@ namespace TorreClou.Application.Services.Torrent
             // LOGIC BRANCH 1: Entity Exists
             if (existingTorrent != null)
             {
-                // If DirectUrl is missing but we have a stream, repair it (Upload)
-                if (string.IsNullOrEmpty(existingTorrent.DirectUrl) && fileStream != null)
-                {
-                    var uploadResult = await UploadTorrentBlobAsync(fileStream, existingTorrent.InfoHash);
-                    if (uploadResult.IsSuccess)
-                    {
-                        existingTorrent.DirectUrl = uploadResult.Value;
-                        await unitOfWork.Complete();
-                    }
-                }
-
+                // Torrent already exists for this user
                 return Result.Success(existingTorrent);
             }
 
@@ -178,7 +180,24 @@ namespace TorreClou.Application.Services.Torrent
             // Note: We only set UploadedByUserId (foreign key), not the navigation property
             // EF Core will use the foreign key value to establish the relationship
 
-            // Upload to blob storage if stream provided
+            // Save torrent file to local storage
+            string? localPath = null;
+            if (fileStream != null)
+            {
+                var torrentsDir = Path.Combine(_downloadPath, "torrents");
+                Directory.CreateDirectory(torrentsDir);
+
+                var fileName = $"{torrent.InfoHash}.torrent";
+                localPath = Path.Combine(torrentsDir, fileName);
+
+                if (fileStream.CanSeek)
+                    fileStream.Position = 0;
+
+                await using var fs = File.Create(localPath);
+                await fileStream.CopyToAsync(fs);
+            }
+
+            // Store torrent metadata in database
             var newTorrentFile = new RequestedFile
             {
                 InfoHash = torrent.InfoHash,
@@ -187,35 +206,13 @@ namespace TorreClou.Application.Services.Torrent
                 Files = torrent.Files.Select(f => f.Path).ToArray(),
                 UploadedByUserId = userId,
                 FileType = "Torrent",
-                
+                DirectUrl = localPath
             };
-            if (fileStream != null)
-            {
-                var uploadResult = await UploadTorrentBlobAsync(fileStream, torrent.InfoHash);
-                if (!uploadResult.IsSuccess)
-                {
-                    return Result<RequestedFile>.Failure("UPLOAD_FAILED", 
-                        $"Failed to upload torrent file to blob storage: {uploadResult.Error?.Message ?? "Unknown error"}. Cannot create RequestedFile.");
-                }
-
-                newTorrentFile.DirectUrl = uploadResult.Value;
-            }
 
             unitOfWork.Repository<RequestedFile>().Add(newTorrentFile);
             await unitOfWork.Complete();
 
             return Result.Success(newTorrentFile);
-        }
-
-        private async Task<Result<string>> UploadTorrentBlobAsync(Stream fileStream, string infoHash)
-        {
-            if (fileStream.CanSeek) fileStream.Position = 0;
-
-            return await blobStorageService.UploadAsync(
-                fileStream,
-                $"{infoHash}.torrent",
-                "application/x-bittorrent"
-            );
         }
     }
 }

@@ -4,6 +4,7 @@ using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Interfaces.Hangfire;
+using TorreClou.Core.Specifications;
 
 namespace TorreClou.Worker.Services
 {
@@ -17,7 +18,7 @@ namespace TorreClou.Worker.Services
             // Download Phase
             JobStatus.DOWNLOADING,
             JobStatus.TORRENT_DOWNLOAD_RETRY,
-            
+
             // Upload Phase
             JobStatus.PENDING_UPLOAD,
             JobStatus.UPLOADING,
@@ -33,17 +34,37 @@ namespace TorreClou.Worker.Services
             // 1. UPLOAD PHASE RECOVERY
             if (IsUploadPhase(userJob.Status))
             {
-                // Route based on the Storage Profile (e.g., Google Drive, S3, etc.)
-                var provider = userJob.StorageProfile?.ProviderType ?? StorageProviderType.GoogleDrive;
+                // Reload the job with StorageProfile to get the correct provider type
+                using var uploadScope = serviceScopeFactory.CreateScope();
+                var uploadUnitOfWork = uploadScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-                userJob.CurrentState = $"Recovering upload to {provider}...";
+                var jobSpec = new BaseSpecification<UserJob>(j => j.Id == userJob.Id);
+                jobSpec.AddInclude(j => j.StorageProfile);
+                var reloadedJob = await uploadUnitOfWork.Repository<UserJob>().GetEntityWithSpec(jobSpec);
+
+                if (reloadedJob == null)
+                {
+                    throw new InvalidOperationException($"Job {userJob.Id} not found when attempting upload recovery");
+                }
+
+                // Route based on the Storage Profile (e.g., Google Drive, S3, etc.)
+                var provider = reloadedJob.StorageProfile?.ProviderType;
+
+                if (provider == null)
+                {
+                    throw new InvalidOperationException($"Job {userJob.Id} has no storage profile configured for upload recovery");
+                }
+
+                reloadedJob.CurrentState = $"Recovering upload to {provider}...";
+                await uploadUnitOfWork.Complete();
 
                 return provider switch
                 {
                     StorageProviderType.GoogleDrive =>
                         client.Enqueue<IGoogleDriveUploadJob>(x => x.ExecuteAsync(job.Id, CancellationToken.None)),
 
-                    // Future: StorageProviderType.S3 => client.Enqueue<S3UploadJob>(...)
+                    StorageProviderType.AwsS3 =>
+                        client.Enqueue<IS3UploadJob>(x => x.ExecuteAsync(job.Id, CancellationToken.None)),
 
                     _ => throw new NotSupportedException($"No upload worker for provider: {provider}")
                 };

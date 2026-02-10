@@ -32,17 +32,13 @@ FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app
 
 # Create mount points for block storage and temp directories
-RUN mkdir -p /mnt/torrents /mnt/backblaze /app/tmp /app/tmp/bundle /app/logs /app/data
+RUN mkdir -p /mnt/torrents /mnt/backblaze /app/tmp /app/tmp/bundle /app/logs /app/data /app/downloads
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
 # Copy published output
 COPY --from=build /app/publish .
-
-# Copy entrypoint script
-COPY TorreClou.Worker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
 
 # === Environment Variables ===
 ENV ASPNETCORE_ENVIRONMENT=Production
@@ -58,9 +54,12 @@ ENV HOME=/app
 ENV DOTNET_gcServer=1
 ENV DOTNET_EnableDiagnostics=0
 
-# Change ownership to non-root user
+# Change ownership to non-root user (includes /app/downloads for volume mount)
 RUN chown -R appuser:appuser /app /mnt/backblaze /mnt/torrents
 
+# Switch to non-root user
+USER appuser
+
 # Set entry point
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["dotnet", "TorreClou.Worker.dll"]
 

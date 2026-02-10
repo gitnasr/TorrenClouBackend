@@ -28,7 +28,7 @@ namespace TorreClou.GoogleDrive.Worker
                 return true;
             }
 
-            // 2. Resolve Services (Scoped is handled by Base Class)
+            // 2. Resolve Services (Scoped is handled by Base Class) (GET USER SERVICES DIRECTLY INSTEAD OF UOW)
             var unitOfWork = services.GetRequiredService<IUnitOfWork>();
             var backgroundJobClient = services.GetRequiredService<IBackgroundJobClient>();
 

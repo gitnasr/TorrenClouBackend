@@ -1,3 +1,5 @@
+using TorreClou.Core.Enums;
+
 namespace TorreClou.Core.Shared;
 
 public class Result
@@ -24,7 +26,7 @@ public class Result
 
     public static Result Success() => new(true, Error.None);
     public static Result Failure(Error error) => new(false, error);
-    public static Result Failure(string code, string message) => new(false, new Error(code, message));
+    public static Result Failure(ErrorCode code, string message) => new(false, new Error(code, message));
     public static Result<TValue> Success<TValue>(TValue value) => new(value, true, Error.None);
     public static Result<TValue> Failure<TValue>(Error error) => new(default, false, error);
     public static Result<TValue> Create<TValue>(TValue? value) => value is not null ? Success(value) : Failure<TValue>(Error.NullValue);
@@ -45,7 +47,7 @@ public class Result<TValue> : Result
         : throw new InvalidOperationException("The value of a failure result can not be accessed.");
 
     public static new Result<TValue> Failure(Error error) => Result.Failure<TValue>(error);
-    public static new Result<TValue> Failure(string code, string message) => Result.Failure<TValue>(new Error(code, message));
+    public static new Result<TValue> Failure(ErrorCode code, string message) => Result.Failure<TValue>(new Error(code, message));
 
     public static implicit operator Result<TValue>(TValue? value) => Create(value);
 }

@@ -45,5 +45,10 @@ namespace TorreClou.Infrastructure.Data
                 entry.State = EntityState.Detached;
             }
         }
+
+        public async Task<bool> CanConnectAsync(CancellationToken ct = default)
+        {
+            return await context.Database.CanConnectAsync(ct);
+        }
     }
 }

@@ -8,7 +8,7 @@ namespace TorreClou.Core.Interfaces
 {
     public interface IJobService
     {
-        Task<Result<JobCreationResult>> CreateAndDispatchJobAsync(int invoiceId, int userId);
+        Task<Result<JobCreationResult>> CreateAndDispatchJobAsync(int torrentFileId, int userId, string[] selectedFiles, int? storageProfileId = null);
         Task<Result<PaginatedResult<JobDto>>> GetUserJobsAsync(int userId, int pageNumber, int pageSize, JobStatus? status = null);
         Task<Result<JobDto>> GetJobByIdAsync(int userId, int jobId, UserRole? userRole = null);
         Task<Result<JobStatisticsDto>> GetUserJobStatisticsAsync(int userId);
@@ -19,7 +19,6 @@ namespace TorreClou.Core.Interfaces
 
         Task<Result<bool>> CancelJobAsync(int jobId, int userId, UserRole? userRole = null);
 
-        Task<Result<bool>> RefundJobAsync(int jobId, int userId);
     }
 }
 

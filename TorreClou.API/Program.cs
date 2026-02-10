@@ -1,4 +1,5 @@
 using Hangfire;
+using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 using Serilog;
 using TorreClou.API.Extensions;
@@ -36,9 +37,6 @@ try
     builder.Services.AddApiServices(builder.Configuration);
     builder.Services.AddIdentityServices(builder.Configuration);
     builder.Services.AddHttpClient();
-    
-    // Prometheus Remote Write to Grafana Cloud
-    builder.Services.AddHostedService<PrometheusRemoteWriteService>();
 
     // CORS
     builder.Services.AddCors(options =>
@@ -52,6 +50,57 @@ try
     });
 
     var app = builder.Build();
+
+    // Conditionally apply database migrations at startup (gated by config flag)
+    var applyMigrations = app.Configuration.GetValue<bool>("APPLY_MIGRATIONS");
+
+    using (var scope = app.Services.CreateScope())
+    {
+        var services = scope.ServiceProvider;
+        var logger = services.GetRequiredService<ILogger<Program>>();
+
+        if (!applyMigrations)
+        {
+            logger.LogInformation("Database migrations skipped (APPLY_MIGRATIONS=false)");
+        }
+        else
+        {
+            try
+            {
+                var context = services.GetRequiredService<TorreClou.Infrastructure.Data.ApplicationDbContext>();
+                logger.LogInformation("Acquiring advisory lock for database migration...");
+
+                // Use PostgreSQL advisory lock to prevent concurrent migration attempts
+                const int advisoryLockId = 839_275_194;
+
+                using var connection = context.Database.GetDbConnection();
+                await connection.OpenAsync();
+
+                using var lockCommand = connection.CreateCommand();
+                lockCommand.CommandText = $"SELECT pg_advisory_lock({advisoryLockId})";
+                await lockCommand.ExecuteNonQueryAsync();
+
+                try
+                {
+                    logger.LogInformation("Advisory lock acquired. Checking for pending database migrations...");
+                    await context.Database.MigrateAsync();
+                    logger.LogInformation("Database migrations applied successfully");
+                }
+                finally
+                {
+                    using var unlockCommand = connection.CreateCommand();
+                    unlockCommand.CommandText = $"SELECT pg_advisory_unlock({advisoryLockId})";
+                    await unlockCommand.ExecuteNonQueryAsync();
+                    logger.LogInformation("Advisory lock released");
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "An error occurred while migrating the database");
+                throw;
+            }
+        }
+    }
 
     // Middleware
     app.UseExceptionHandler();

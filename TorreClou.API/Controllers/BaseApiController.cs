@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
-using TorreClou.Core.Shared;
 using TorreClou.Core.Enums;
+using TorreClou.Core.Shared;
 
 namespace TorreClou.API.Controllers;
 
@@ -15,28 +15,14 @@ public abstract class BaseApiController : ControllerBase
     /// <summary>
     /// Gets the authenticated user's ID from claims.
     /// </summary>
-    protected int UserId => int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+    protected int UserId => int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value
         ?? throw new UnauthorizedAccessException("User ID not found in claims"));
 
-    /// <summary>
-    /// Gets the authenticated user's email from claims.
-    /// </summary>
-    protected string? UserEmail => User.FindFirst(ClaimTypes.Email)?.Value;
-
-    /// <summary>
-    /// Gets the authenticated user's role from claims.
-    /// </summary>
-    protected UserRole UserRole
+    protected int GetCurrentUserId()
     {
-        get
-        {
-            var roleClaim = User.FindFirst(ClaimTypes.Role)?.Value;
-            if (string.IsNullOrEmpty(roleClaim))
-                return UserRole.User; // Default to User if role not found
-            
-            return Enum.TryParse<UserRole>(roleClaim, out var role) ? role : UserRole.User;
-        }
+        return UserId;
     }
+
 
     /// <summary>
     /// Handles a Result object and returns the appropriate IActionResult.
@@ -98,20 +84,46 @@ public abstract class BaseApiController : ControllerBase
     /// </summary>
     private IActionResult MapErrorToResponse(Error error)
     {
-        // Map error codes to HTTP status codes
-        var statusCode = error.Code.ToUpperInvariant() switch
+        var statusCode = error.Code switch
         {
-            var code when code.Contains("NOT_FOUND") => StatusCodes.Status404NotFound,
-            var code when code.Contains("UNAUTHORIZED") || code.Contains("AUTH") => StatusCodes.Status401Unauthorized,
-            var code when code.Contains("FORBIDDEN") => StatusCodes.Status403Forbidden,
-            var code when code.Contains("CONFLICT") || code.Contains("DUPLICATE") => StatusCodes.Status409Conflict,
-            var code when code.Contains("VALIDATION") || code.Contains("INVALID") => StatusCodes.Status422UnprocessableEntity,
+            // 404 Not Found
+            ErrorCode.NotFound or ErrorCode.ProfileNotFound or ErrorCode.TorrentNotFound
+            or ErrorCode.JobNotFound or ErrorCode.UserNotFound or ErrorCode.FileNotFound
+            or ErrorCode.BucketNotFound
+                => StatusCodes.Status404NotFound,
+
+            // 401 Unauthorized
+            ErrorCode.Unauthorized or ErrorCode.InvalidCredentials
+                => StatusCodes.Status401Unauthorized,
+
+            // 403 Forbidden
+            ErrorCode.AccessDenied
+                => StatusCodes.Status403Forbidden,
+
+            // 409 Conflict
+            ErrorCode.DuplicateEmail or ErrorCode.AlreadyDisconnected
+            or ErrorCode.JobAlreadyExists or ErrorCode.JobAlreadyCancelled
+                => StatusCodes.Status409Conflict,
+
+            // 422 Unprocessable Entity (Validation)
+            ErrorCode.Invalid or ErrorCode.InvalidTorrent or ErrorCode.InvalidInfoHash
+            or ErrorCode.InvalidFileName or ErrorCode.InvalidFileSize
+            or ErrorCode.InvalidProfileName or ErrorCode.InvalidS3Config
+            or ErrorCode.InvalidClientId or ErrorCode.InvalidClientSecret
+            or ErrorCode.InvalidRedirectUri or ErrorCode.InvalidState
+            or ErrorCode.InvalidResponse or ErrorCode.InvalidProfile
+            or ErrorCode.InvalidCredentialsJson or ErrorCode.InvalidStorageProfile
+            or ErrorCode.V2OnlyNotSupported or ErrorCode.ProfileNameTooShort
+            or ErrorCode.ProfileNameTooLong
+                => StatusCodes.Status422UnprocessableEntity,
+
+            // 400 Bad Request (default)
             _ => StatusCodes.Status400BadRequest
         };
 
         return StatusCode(statusCode, new
         {
-            code = error.Code,
+            code = error.Code.ToString(),
             message = error.Message
         });
     }
@@ -128,17 +140,4 @@ public abstract class BaseApiController : ControllerBase
             _ => Ok(data)
         };
     }
-
-    /// <summary>
-    /// Returns an error response with a custom code and message.
-    /// </summary>
-    protected IActionResult Error(string code, string message, int statusCode = 400)
-    {
-        return StatusCode(statusCode, new
-        {
-            code,
-            message
-        });
-    }
 }
-

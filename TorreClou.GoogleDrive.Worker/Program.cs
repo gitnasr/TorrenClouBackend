@@ -36,13 +36,11 @@ try
 
     // Hangfire
     builder.Services.AddSharedHangfireBase(builder.Configuration);
-    builder.Services.AddSharedHangfireServer(queues: ["googledrive", "default"]);
+    builder.Services.AddSharedHangfireServer(builder.Configuration, queues: ["googledrive", "default"]);
 
-    // Worker Services
+    // Worker Services (Google Drive credentials configured per-user via API)
     builder.Services.AddHttpClient();
     builder.Services.AddScoped<IGoogleDriveUploadJob, GoogleDriveUploadJob>();
-    builder.Services.Configure<GoogleDriveSettings>(builder.Configuration.GetSection("GoogleDrive"));
-    builder.Services.Configure<BackblazeSettings>(builder.Configuration.GetSection("Backblaze"));
     builder.Services.AddScoped<IGoogleDriveJobService, GoogleDriveJobService>();
     builder.Services.AddScoped<IUploadProgressContext, UploadProgressContext>();
     builder.Services.AddScoped<ITransferSpeedMetrics, TransferSpeedMetrics>();

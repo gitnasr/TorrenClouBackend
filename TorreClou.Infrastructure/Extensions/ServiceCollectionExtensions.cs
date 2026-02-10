@@ -8,10 +8,8 @@ using TorreClou.Infrastructure.Interceptors;
 using TorreClou.Infrastructure.Repositories;
 using TorreClou.Infrastructure.Services;
 using TorreClou.Infrastructure.Settings;
-using TorreClou.Core.Options;
 using TorreClou.Application.Services.Google_Drive;
 using TorreClou.Infrastructure.Services.Redis;
-using TorreClou.Infrastructure.Services.S3;
 using TorreClou.Infrastructure.Services.Drive;
 using TorreClou.Infrastructure.Services.Handlers;
 
@@ -24,16 +22,6 @@ namespace TorreClou.Infrastructure.Extensions
             services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
             services.AddScoped<IUnitOfWork, UnitOfWork>();
             services.AddSingleton<UpdateAuditableEntitiesInterceptor>();
-
-            // Coinremitter payment gateway
-            services.AddHttpClient<IPaymentGateway, CoinremitterService>();
-            services.Configure<CoinremitterSettings>(configuration.GetSection("Coinremitter"));
-
-            // Backblaze B2 Storage
-            services.Configure<BackblazeSettings>(configuration.GetSection("Backblaze"));
-            services.AddSingleton<IBlobStorageService, BackblazeStorageService>();
-            services.AddScoped<IS3ResumableUploadService, S3ResumableUploadService>();
-            services.AddScoped<IS3FileDownloadService, S3FileDownloadService>();
 
             // Redis
             var redisSettings = configuration.GetSection("Redis").Get<RedisSettings>() ?? new RedisSettings();
@@ -48,8 +36,7 @@ namespace TorreClou.Infrastructure.Extensions
 
             services.AddScoped<ITokenService, TokenService>();
 
-            // Google Drive Services
-            services.Configure<GoogleDriveSettings>(configuration.GetSection("GoogleDrive"));
+            // Google Drive Services (credentials configured per-user via API)
             services.AddScoped<IGoogleDriveJobService, GoogleDriveJobService>();
             services.AddScoped<IGoogleDriveService, GoogleDriveService>();
 
@@ -62,9 +49,16 @@ namespace TorreClou.Infrastructure.Extensions
             // Job Status Service (timeline tracking)
             services.AddScoped<IJobStatusService, JobStatusService>();
 
+            // Health Check Service
+            services.AddScoped<IHealthCheckService, HealthCheckService>();
+
+            // Google API Client (for OAuth token exchange and user info)
+            services.AddScoped<IGoogleApiClient, GoogleApiClient>();
+
             // Job Handlers (Strategy Pattern for decoupled job processing)
             // Storage Provider Handlers
             services.AddScoped<IStorageProviderHandler, GoogleDriveStorageProviderHandler>();
+            services.AddScoped<IStorageProviderHandler, S3StorageProviderHandler>();
             
             // Job Type Handlers
             services.AddScoped<IJobTypeHandler, TorrentJobTypeHandler>();

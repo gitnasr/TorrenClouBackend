@@ -10,6 +10,7 @@ COPY TorreClou.Infrastructure/TorreClou.Infrastructure.csproj TorreClou.Infrastr
 COPY TorreClou.API/TorreClou.API.csproj TorreClou.API/
 COPY TorreClou.Worker/TorreClou.Worker.csproj TorreClou.Worker/
 COPY TorreClou.GoogleDrive.Worker/TorreClou.GoogleDrive.Worker.csproj TorreClou.GoogleDrive.Worker/
+COPY TorreClou.S3.Worker/TorreClou.S3.Worker.csproj TorreClou.S3.Worker/
 
 # Restore dependencies
 RUN dotnet restore TorreClou.sln
@@ -31,6 +32,9 @@ WORKDIR /app
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Create downloads mount point
+RUN mkdir -p /app/downloads
 
 # Copy published output
 COPY --from=build /app/publish .

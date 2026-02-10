@@ -1,17 +1,14 @@
-
 namespace TorreClou.Core.DTOs.Auth;
 
-public class GoogleLoginDto
+public record LoginRequestDto
 {
-    public string IdToken { get; set; }
-    public string Provider { get; set; } = "Google";
+    public string Email { get; init; } = string.Empty;
+    public string Password { get; init; } = string.Empty;
 }
 
-public class AuthResponseDto
+public record AuthResponseDto
 {
-    public string AccessToken { get; set; }
-    public string Email { get; set; }
-    public string FullName { get; set; }
-    public decimal CurrentBalance { get; set; }
-    public string Role { get; set; }
+    public string AccessToken { get; init; } = string.Empty;
+    public string Email { get; init; } = string.Empty;
+    public string FullName { get; init; } = string.Empty;
 }

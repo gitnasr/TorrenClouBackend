@@ -7,7 +7,7 @@ using TorreClou.Core.Interfaces.Hangfire;
 using TorreClou.Core.Specifications;
 using TorreClou.Infrastructure.Settings;
 using TorreClou.Infrastructure.Workers;
-using SyncEntity = TorreClou.Core.Entities.Jobs.Sync;
+
 
 namespace TorreClou.GoogleDrive.Worker.Services
 {
@@ -19,7 +19,6 @@ namespace TorreClou.GoogleDrive.Worker.Services
         IUploadProgressContext progressContext,
         ITransferSpeedMetrics speedMetrics,
         IRedisLockService redisLockService,
-        IRedisStreamService redisStreamService,
         IJobStatusService jobStatusService) : UserJobBase<GoogleDriveUploadJob>(unitOfWork, logger, jobStatusService), IGoogleDriveUploadJob
     {
 
@@ -41,7 +40,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
         {
             // FIX: Extended lock time to 2 hours to cover large file uploads
             var lockKey = $"gdrive:lock:{job.Id}";
-            var lockExpiry = TimeSpan.FromHours(2);
+            var lockExpiry = TimeSpan.FromHours(2); // Maybe we can make it configurable in the future, but for now we want to be very conservative to prevent multiple workers processing the same job and causing duplicate uploads or
 
             using var distributedLock = await redisLockService.AcquireLockAsync(lockKey, lockExpiry, cancellationToken);
 
@@ -195,9 +194,6 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 metadata: new { totalBytes, filesCount = filesToUpload.Length, durationSeconds = duration, completedAt = job.CompletedAt });
 
             Logger.LogInformation("{LogPrefix} Completed successfully | JobId: {JobId}", LogPrefix, job.Id);
-
-            // 11. Trigger Sync
-            await CreateSyncAndPublishToStreamAsync(job, totalBytes, filesToUpload.Length);
         }
 
         protected  override async Task MarkJobFailedAsync(UserJob job, string errorMessage, bool hasRetries = false)
@@ -303,7 +299,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
             return map;
         }
 
-        private class UploadResult { public int TotalFiles; public int FailedFiles; public bool AllFilesUploaded => FailedFiles == 0; }
+        private sealed class UploadResult { public int TotalFiles; public int FailedFiles; public bool AllFilesUploaded => FailedFiles == 0; }
 
         private async Task<UploadResult> UploadFilesAsync(
             UserJob job,
@@ -343,7 +339,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 else
                 {
                     result.FailedFiles++;
-                    Logger.LogError("{LogPrefix} Upload failed for {File}: {Error}", LogPrefix, file.Name, upload.Error.Message);
+                    Logger.LogCritical("{LogPrefix} Upload failed for {File}: {Error}", LogPrefix, file.Name, upload.Error.Message);
 
                     // Recover partial progress
                     var resumeUri = await progressContext.GetResumeUriAsync(relPath);
@@ -357,34 +353,6 @@ namespace TorreClou.GoogleDrive.Worker.Services
             return result;
         }
 
-        private async Task CreateSyncAndPublishToStreamAsync(UserJob job, long totalBytes, int filesCount)
-        {
-            try
-            {
-                var sync = new SyncEntity
-                {
-                    JobId = job.Id,
-                    Status = SyncStatus.PENDING,
-                    LocalFilePath = job.DownloadPath,
-                    S3KeyPrefix = $"jobs/{job.Id}",
-                    TotalBytes = totalBytes,
-                    FilesTotal = filesCount
-                };
-                UnitOfWork.Repository<SyncEntity>().Add(sync);
-                await UnitOfWork.Complete();
 
-                await redisStreamService.PublishAsync("sync:stream", new Dictionary<string, string>
-                {
-                    { "jobId", job.Id.ToString() },
-                    { "syncId", sync.Id.ToString() },
-                    { "downloadPath", job.DownloadPath! },
-                    { "createdAt", DateTime.UtcNow.ToString("O") }
-                });
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "{LogPrefix} Sync trigger failed (Non-critical)", LogPrefix);
-            }
-        }
     }
 }

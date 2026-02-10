@@ -1,36 +1,112 @@
 ﻿namespace TorreClou.Core.Enums
 {
-    public enum RegionCode { Global, US, EU, EG, SA, IN }
+    public enum ErrorCode
+    {
+        // General
+        None,
+        NullValue,
+        ServerConfigError,
+        UnexpectedError,
+
+        // Not Found
+        NotFound,
+        ProfileNotFound,
+        TorrentNotFound,
+        JobNotFound,
+        UserNotFound,
+        FileNotFound,
+        BucketNotFound,
+
+        // Authentication / Authorization
+        Unauthorized,
+        InvalidCredentials,
+        AccessDenied,
+
+        // Validation
+        Invalid,
+        InvalidTorrent,
+        InvalidInfoHash,
+        InvalidFileName,
+        InvalidFileSize,
+        InvalidProfileName,
+        InvalidS3Config,
+        InvalidClientId,
+        InvalidClientSecret,
+        InvalidRedirectUri,
+        InvalidState,
+        InvalidResponse,
+        InvalidProfile,
+        InvalidCredentialsJson,
+        InvalidStorageProfile,
+        V2OnlyNotSupported,
+        ProfileNameTooShort,
+        ProfileNameTooLong,
+
+        // Conflict / Duplication
+        DuplicateEmail,
+        AlreadyDisconnected,
+        JobAlreadyExists,
+        JobAlreadyCancelled,
+
+        // Business Logic
+        ProfileInUse,
+        NoStorage,
+        StorageInactive,
+        InactiveProfile,
+        NoCredentials,
+        MissingRequiredFields,
+        JobCompleted,
+        JobCancelled,
+        JobActive,
+        JobRetrying,
+        JobInUploadPhase,
+        JobNotCancellable,
+
+        // OAuth / External Service
+        AuthUrlError,
+        MissingCredentials,
+        TokenExchangeFailed,
+        OAuthCallbackError,
+        NoRefreshToken,
+        TokenError,
+        RefreshFailed,
+        RefreshError,
+        S3Error,
+        BucketAccessDenied,
+
+        // Upload / Storage Operations
+        FolderCreateFailed,
+        FolderCreateError,
+        UploadError,
+        UploadIncomplete,
+        InitFailed,
+        InitUploadFailed,
+        InitUploadError,
+        ChunkFailed,
+        UploadPartFailed,
+        UploadPartError,
+        CompleteUploadFailed,
+        CompleteUploadError,
+        ReadError,
+        StatusQueryFailed,
+        StatusQueryError,
+        CheckFailed,
+        CheckError,
+        ListPartsFailed,
+        ListPartsError
+    }
 
     public enum UserRole { User, Admin, Support , Suspended, Banned}
 
     public enum StorageProviderType { GoogleDrive, OneDrive, AwsS3, Dropbox }
 
-    public enum TransactionType { DEPOSIT, PAYMENT, REFUND, ADMIN_ADJUSTMENT, BONUS,
-        DEDUCTION
-    }
-
     public enum FileStatus { PENDING, DOWNLOADING, READY, CORRUPTED, DELETED }
 
-    public enum DiscountType
+    public enum S3UploadProgressStatus
     {
-        Percentage,
-        FixedAmount
-    }
-    public enum DepositStatus
-    {
-        Pending,   // اليوزر لسه فاتح صفحة الدفع
-        Completed, // الفلوس وصلت وتأكدت
-        Failed,    // الفيزا اترفضا
-        Expired    // اللينك مدته انتهت
-    }
-    public enum SyncStatus
-    {
-        SYNC_RETRY,
-        SYNCING,
-        FAILED,
-        COMPLETED,
-        PENDING
+        InProgress,
+        Completed,
+        Failed
     }
     public enum JobStatus 
     { 
@@ -48,7 +124,7 @@
         GOOGLE_DRIVE_FAILED 
     }
 
-    public enum JobType { Torrent,  Sync}
+    public enum JobType { Torrent }
 
     public enum ViolationType
     {

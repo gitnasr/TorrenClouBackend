@@ -71,7 +71,7 @@ namespace TorreClou.Infrastructure.Services
             // DYNAMIC SPECIFICATION
             // We now query based on the aggregated list of statuses from our strategies
             var stuckJobsSpec = new BaseSpecification<TJob>(j =>
-                _allMonitoredStatuses.Contains(j.Status) && 
+                _allMonitoredStatuses.Contains(j.Status) &&
                 (
                     (j.LastHeartbeat != null && j.LastHeartbeat < staleTime) ||
                     (j.LastHeartbeat == null && j.StartedAt != null && j.StartedAt < staleTime)

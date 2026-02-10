@@ -11,12 +11,6 @@ namespace TorreClou.Core.Interfaces
         Task<Result> SetDefaultProfileAsync(int userId, int id);
         Task<Result<UserStorageProfile>> ValidateActiveStorageProfileByUserId(int userId, int profileId);
         Task<Result> DisconnectProfileAsync(int userId, int id);
+        Task<Result<bool>> DeleteStorageProfileAsync(int userId, int profileId);
     }
 }
-
-
-
-
-
-
-

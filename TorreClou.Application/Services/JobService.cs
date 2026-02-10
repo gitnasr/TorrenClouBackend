@@ -5,14 +5,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TorreClou.Core.DTOs.Common;
 using TorreClou.Core.DTOs.Jobs;
-using TorreClou.Core.Entities.Financals;
+
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
-using TorreClou.Core.Models.Pricing;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
 using TorreClou.Core.Extensions;
+using TorreClou.Core.Entities.Torrents;
 namespace TorreClou.Application.Services
 {
     public class JobService(
@@ -20,45 +20,46 @@ namespace TorreClou.Application.Services
         IRedisStreamService redisStreamService,
         IJobStatusService jobStatusService,
         IServiceScopeFactory serviceScopeFactory,
-        IWalletService walletService,
         IJobHandlerFactory jobHandlerFactory,
         ILogger<JobService> logger) : IJobService
     {
         private const string JobStreamKey = "jobs:stream";
 
-        public async Task<Result<JobCreationResult>> CreateAndDispatchJobAsync(int invoiceId, int userId)
+        public async Task<Result<JobCreationResult>> CreateAndDispatchJobAsync(int torrentFileId, int userId, string[] selectedFiles, int? storageProfileId = null)
         {
-            logger.LogInformation("Create and dispatch job requested | InvoiceId: {InvoiceId} | UserId: {UserId}", invoiceId, userId);
+            logger.LogInformation("Create and dispatch job requested | TorrentFileId: {TorrentFileId} | UserId: {UserId}", torrentFileId, userId);
+            // THATS NOT CORRECT, THE SERVICE HAS TO KNOW NOTHING ABOUT TORRENT, IT SHOULD BE FILE, THE FILE CAN BE TORRENT OR DIRECT URL, THE SERVICE SHOULD NOT CARE, IT JUST NEEDS A FILE WITH PATHS TO DOWNLOAD, THE JOB TYPE HANDLER SHOULD KNOW HOW TO HANDLE THE FILE BASED ON ITS TYPE
+            // 1. Load torrent file
+            var torrentFile = await unitOfWork.Repository<RequestedFile>().GetByIdAsync(torrentFileId);
+            if (torrentFile == null)
+                return Result<JobCreationResult>.Failure(ErrorCode.TorrentNotFound, "Torrent file not found.");
 
-            // 1. Load Invoice: Move it to invoice service and inject it 
-            var invoiceSpec = new BaseSpecification<Invoice>(i => i.Id == invoiceId && i.UserId == userId);
-            invoiceSpec.AddInclude(i => i.TorrentFile);
-            var invoice = await unitOfWork.Repository<Invoice>().GetEntityWithSpec(invoiceSpec);
-
-            // 2. Validate invoice for job creation
-            var invoiceValidation = ValidateInvoiceForJobCreation(invoice, userId);
-            if (invoiceValidation.IsFailure)
-                return Result<JobCreationResult>.Failure(invoiceValidation.Error.Code, invoiceValidation.Error.Message);
-
-            invoice = invoiceValidation.Value;
-
-            // 3. Check for existing active jobs
-            var existingJobCheck = await CheckExistingActiveJobAsync(userId, invoice.TorrentFileId);
+            // 2. Check for existing active jobs
+            var existingJobCheck = await CheckExistingActiveJobAsync(userId, torrentFileId);
             if (existingJobCheck.IsFailure)
-                return Result<JobCreationResult>.Failure(existingJobCheck.Error.Code, existingJobCheck.Error.Message);
+                return Result<JobCreationResult>.Failure(existingJobCheck.Error);
 
-            // 4. Validate storage profile
-            var defaultStorageProfileSpec = new BaseSpecification<UserStorageProfile>(sp => sp.UserId == userId && sp.IsDefault && sp.IsActive);
-            var defaultStorageProfile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(defaultStorageProfileSpec);
-            
-            var profileValidation = ValidateStorageProfileForJob(defaultStorageProfile, userId);
-            if (profileValidation.IsFailure)
-                return Result<JobCreationResult>.Failure(profileValidation.Error.Code, profileValidation.Error.Message);
+            // 3. Validate storage profile
+            UserStorageProfile? defaultStorageProfile;
+            if (storageProfileId.HasValue)
+            {
+                defaultStorageProfile = await unitOfWork.Repository<UserStorageProfile>().GetByIdAsync(storageProfileId.Value);
+                if (defaultStorageProfile == null || defaultStorageProfile.UserId != userId || !defaultStorageProfile.IsActive)
+                    return Result<JobCreationResult>.Failure(ErrorCode.InvalidStorageProfile, "Invalid or inactive storage profile.");
+            }
+            else
+            {
+                var defaultStorageProfileSpec = new BaseSpecification<UserStorageProfile>(sp => sp.UserId == userId && sp.IsDefault && sp.IsActive);
+                defaultStorageProfile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(defaultStorageProfileSpec);
+                
+                var profileValidation = ValidateStorageProfileForJob(defaultStorageProfile, userId);
+                if (profileValidation.IsFailure)
+                    return Result<JobCreationResult>.Failure(profileValidation.Error);
 
-            defaultStorageProfile = profileValidation.Value;
+                defaultStorageProfile = profileValidation.Value;
+            }
 
-
-            // 5. Create UserJob (default job type from first handler, can be extended for multiple job types)
+            // 4. Create UserJob
             var defaultJobType = jobHandlerFactory.GetAllJobTypeHandlers().FirstOrDefault()?.JobType ?? JobType.Torrent;
             var job = new UserJob
             {
@@ -66,30 +67,25 @@ namespace TorreClou.Application.Services
                 StorageProfileId = defaultStorageProfile.Id,
                 Status = JobStatus.QUEUED,
                 Type = defaultJobType,
-                RequestFileId = invoice.TorrentFileId,
-                SelectedFilePaths = ExtractSelectedFilesFromSnapshot(invoice.PricingSnapshotJson)
+                RequestFileId = torrentFileId,
+                SelectedFilePaths = selectedFiles
             };
 
             unitOfWork.Repository<UserJob>().Add(job);
             await unitOfWork.Complete();
 
-            logger.LogInformation("Job created | JobId: {JobId} | InvoiceId: {InvoiceId} | StorageProfileId: {StorageProfileId} | RequestFileId: {RequestFileId}", 
-                job.Id, invoiceId, defaultStorageProfile.Id, invoice.TorrentFileId);
+            logger.LogInformation("Job created | JobId: {JobId} | StorageProfileId: {StorageProfileId} | RequestFileId: {RequestFileId}", 
+                job.Id, defaultStorageProfile.Id, torrentFileId);
 
-            // 6. Record initial status in timeline
+            // 5. Record initial status in timeline
             await jobStatusService.RecordInitialJobStatusAsync(job, new
             {
-                invoiceId,
                 storageProfileId = defaultStorageProfile.Id,
-                requestFileId = invoice.TorrentFileId,
-                selectedFilesCount = job.SelectedFilePaths.Length
+                requestFileId = torrentFileId,
+                selectedFilesCount = job.SelectedFilePaths?.Length ?? 0
             });
 
-            // 7. Link Invoice
-            invoice.JobId = job.Id;
-            await unitOfWork.Complete();
-
-            // 8. Publish to Stream
+            // 6. Publish to Stream
             await redisStreamService.PublishAsync(JobStreamKey, new Dictionary<string, string>
             {
                 { "jobId", job.Id.ToString() },
@@ -98,13 +94,12 @@ namespace TorreClou.Application.Services
                 { "createdAt", DateTime.UtcNow.ToString("O") }
             });
 
-            logger.LogInformation("Job creation and dispatch completed successfully | JobId: {JobId} | InvoiceId: {InvoiceId} | UserId: {UserId}", 
-                job.Id, invoiceId, userId);
+            logger.LogInformation("Job creation and dispatch completed successfully | JobId: {JobId} | UserId: {UserId}", 
+                job.Id, userId);
 
             return Result.Success(new JobCreationResult
             {
                 JobId = job.Id,
-                InvoiceId = invoiceId,
                 StorageProfileId = defaultStorageProfile.Id,
             });
         }
@@ -138,8 +133,7 @@ namespace TorreClou.Application.Services
                 TotalBytes = job.TotalBytes,
                 SelectedFilePaths = job.SelectedFilePaths,
                 CreatedAt = job.CreatedAt,
-                UpdatedAt = job.UpdatedAt,
-                IsRefunded = job.IsRefunded
+                UpdatedAt = job.UpdatedAt
             }).ToList();
 
             return Result.Success(new PaginatedResult<JobDto>
@@ -166,7 +160,7 @@ namespace TorreClou.Application.Services
             if (job == null)
             {
                 logger.LogWarning("Job not found | JobId: {JobId} | UserId: {UserId}", jobId, userId);
-                return Result<JobDto>.Failure("NOT_FOUND", "Job not found.");
+                return Result<JobDto>.Failure(ErrorCode.NotFound, "Job not found.");
             }
 
             // Fetch timeline
@@ -191,7 +185,6 @@ namespace TorreClou.Application.Services
                 SelectedFilePaths = job.SelectedFilePaths,
                 CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt,
-                IsRefunded = job.IsRefunded,
                 Timeline = timeline.ToList()
             });
         }
@@ -234,22 +227,6 @@ namespace TorreClou.Application.Services
             return Result.Success(statistics);
         }
 
-        private static string[] ExtractSelectedFilesFromSnapshot(string pricingSnapshotJson)
-        {
-            if (string.IsNullOrEmpty(pricingSnapshotJson))
-                return [];
-
-            try
-            {
-                var snapshot = JsonSerializer.Deserialize<PricingSnapshot>(pricingSnapshotJson);
-                return snapshot?.SelectedFiles?.ToArray() ?? [];
-            }
-            catch
-            {
-                return [];
-            }
-        }
-
         public async Task<Result<IReadOnlyList<UserJob>>> GetActiveJobsByStorageProfileIdAsync(int storageProfileId)
         {
             logger.LogDebug("Get active jobs by storage profile requested | StorageProfileId: {StorageProfileId}", storageProfileId);
@@ -270,14 +247,13 @@ namespace TorreClou.Application.Services
             spec.AddInclude(j => j.StorageProfile);
             spec.AddInclude(j => j.RequestFile);
             spec.AddInclude(j => j.User);
-            spec.AddInclude(j => j.Invoice);
 
             var job = await unitOfWork.Repository<UserJob>().GetEntityWithSpec(spec);
 
             // 2. Validate job exists and user is authorized
             var jobValidation = ValidateJobExistsAndAuthorized(job, userId, userRole, "retry");
             if (jobValidation.IsFailure)
-                return Result<bool>.Failure(jobValidation.Error.Code, jobValidation.Error.Message);
+                return Result<bool>.Failure(jobValidation.Error);
 
             job = jobValidation.Value;
 
@@ -349,14 +325,13 @@ namespace TorreClou.Application.Services
             // 1. Load job with all necessary includes
             var spec = new BaseSpecification<UserJob>(j => j.Id == jobId);
             spec.AddInclude(j => j.StorageProfile);
-            spec.AddInclude(j => j.Invoice);
 
             var job = await unitOfWork.Repository<UserJob>().GetEntityWithSpec(spec);
 
             // 2. Validate job exists and user is authorized
             var jobValidation = ValidateJobExistsAndAuthorized(job, userId, userRole, "cancel");
             if (jobValidation.IsFailure)
-                return Result<bool>.Failure(jobValidation.Error.Code, jobValidation.Error.Message);
+                return Result<bool>.Failure(jobValidation.Error);
 
             job = jobValidation.Value;
 
@@ -413,92 +388,11 @@ namespace TorreClou.Application.Services
                     cancelledAt = DateTime.UtcNow
                 });
 
-            // 10. Automatic Refund
-            if (job.Invoice != null && job.Invoice.PaidAt != null && job.Invoice.RefundedAt == null)
-            {
-                logger.LogInformation("Processing automatic refund for cancelled job | JobId: {JobId} | InvoiceId: {InvoiceId} | Amount: {Amount}", job.Id, job.Invoice.Id, job.Invoice.FinalAmountInNCurrency);
-                var refundResult = await walletService.ProcessRefundAsync(
-                    job.UserId,
-                    job.Invoice.FinalAmountInNCurrency,
-                    job.Invoice.Id,
-                    $"Refund for cancelled job #{job.Id}");
-
-                if (refundResult.IsSuccess)
-                {
-                    job.Invoice.RefundedAt = DateTime.UtcNow;
-                    job.IsRefunded = true;
-                    await unitOfWork.Complete();
-                    logger.LogInformation("Automatic refund processed successfully | JobId: {JobId} | TransactionId: {TransactionId}", job.Id, refundResult.Value);
-                }
-                else
-                {
-                    logger.LogWarning("Automatic refund failed for cancelled job | JobId: {JobId} | Error: {Error}", job.Id, refundResult.Error.Message);
-                    // Log error but don't fail the cancellation
-                    // The job is already cancelled, refund can be processed manually
-                }
-            }
 
             logger.LogInformation("Job cancellation completed successfully | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
             return Result.Success(true);
         }
 
-        public async Task<Result<bool>> RefundJobAsync(int jobId, int userId)
-        {
-            logger.LogInformation("Refund job requested | JobId: {JobId} | UserId: {UserId}", jobId, userId);
-
-            // 1. Load job with all necessary includes
-            var spec = new BaseSpecification<UserJob>(j => j.Id == jobId);
-            spec.AddInclude(j => j.Invoice);
-
-            var job = await unitOfWork.Repository<UserJob>().GetEntityWithSpec(spec);
-
-            // 2. Validate job exists and user is authorized
-            var jobValidation = ValidateJobExistsAndAuthorized(job, userId, null, "refund");
-            if (jobValidation.IsFailure)
-                return Result<bool>.Failure(jobValidation.Error.Code, jobValidation.Error.Message);
-
-            job = jobValidation.Value;
-
-            // 3. Validate job can be refunded
-            var refundValidation = ValidateJobForRefund(job, userId);
-            if (refundValidation.IsFailure)
-                return refundValidation;
-
-            // 4. Process refund
-            logger.LogInformation("Processing refund | JobId: {JobId} | InvoiceId: {InvoiceId} | Amount: {Amount}", job.Id, job.Invoice!.Id, job.Invoice.FinalAmountInNCurrency);
-            var refundResult = await walletService.ProcessRefundAsync(
-                userId,
-                job.Invoice.FinalAmountInNCurrency,
-                job.Invoice.Id,
-                $"Refund for failed job #{job.Id}");
-
-            if (refundResult.IsFailure)
-            {
-                logger.LogError("Refund processing failed | JobId: {JobId} | Error: {Error}", job.Id, refundResult.Error.Message);
-                return Result<bool>.Failure(refundResult.Error.Code, refundResult.Error.Message);
-            }
-
-            // 5. Update invoice and job
-            job.Invoice.RefundedAt = DateTime.UtcNow;
-            job.IsRefunded = true;
-            await unitOfWork.Complete();
-
-            // 6. Record refund in status history
-            await jobStatusService.TransitionJobStatusAsync(
-                job,
-                job.Status, // Keep current failed status
-                StatusChangeSource.User,
-                metadata: new
-                {
-                    refunded = true,
-                    refundedAt = DateTime.UtcNow,
-                    refundTransactionId = refundResult.Value,
-                    refundAmount = job.Invoice.FinalAmountInNCurrency
-                });
-
-            logger.LogInformation("Job refund completed successfully | JobId: {JobId} | TransactionId: {TransactionId} | UserId: {UserId}", job.Id, refundResult.Value, userId);
-            return Result.Success(true);
-        }
 
         // --- Guard Check Helper Methods ---
 
@@ -507,13 +401,13 @@ namespace TorreClou.Application.Services
             if (job == null)
             {
                 logger.LogWarning("Job not found for {Operation} | UserId: {UserId}", operation, userId);
-                return Result<UserJob>.Failure("JOB_NOT_FOUND", "Job not found.");
+                return Result<UserJob>.Failure(ErrorCode.JobNotFound, "Job not found.");
             }
 
             if (userRole != UserRole.Admin && job.UserId != userId)
             {
                 logger.LogWarning("Unauthorized {Operation} attempt | JobId: {JobId} | UserId: {UserId}", operation, job.Id, userId);
-                return Result<UserJob>.Failure("UNAUTHORIZED", $"You don't have permission to {operation.ToLower()} this job.");
+                return Result<UserJob>.Failure(ErrorCode.Unauthorized, $"You don't have permission to {operation.ToLower()} this job.");
             }
 
             return Result.Success(job);
@@ -524,32 +418,28 @@ namespace TorreClou.Application.Services
             if (job.Status == JobStatus.COMPLETED)
             {
                 logger.LogWarning("Attempt to retry completed job | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure("JOB_COMPLETED", "Cannot retry a completed job.");
+                return Result<bool>.Failure(ErrorCode.JobCompleted, "Cannot retry a completed job.");
             }
 
             if (job.Status == JobStatus.CANCELLED)
             {
                 logger.LogWarning("Attempt to retry cancelled job | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure("JOB_CANCELLED", "Cannot retry a cancelled job.");
+                return Result<bool>.Failure(ErrorCode.JobCancelled, "Cannot retry a cancelled job.");
             }
 
-            if (job.IsRefunded)
-            {
-                logger.LogWarning("Attempt to retry refunded job | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure("JOB_REFUNDED", "Cannot retry a refunded job. Please create a new job.");
-            }
+
 
             if (job.Status.IsActive())
             {
                 logger.LogWarning("Attempt to retry active job | JobId: {JobId} | Status: {Status} | UserId: {UserId}", job.Id, job.Status, userId);
-                return Result<bool>.Failure("JOB_ACTIVE",
+                return Result<bool>.Failure(ErrorCode.JobActive,
                     $"Job is currently {job.Status}. Wait for it to complete or fail before retrying.");
             }
 
             if (job.StorageProfile == null || !job.StorageProfile.IsActive)
             {
                 logger.LogWarning("Attempt to retry job with inactive storage profile | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure("STORAGE_INACTIVE",
+                return Result<bool>.Failure(ErrorCode.StorageInactive,
                     "The storage profile for this job is no longer active.");
             }
 
@@ -561,98 +451,43 @@ namespace TorreClou.Application.Services
             if (job.Status == JobStatus.COMPLETED)
             {
                 logger.LogWarning("Attempt to cancel completed job | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure("JOB_COMPLETED", "Cannot cancel a completed job.");
+                return Result<bool>.Failure(ErrorCode.JobCompleted, "Cannot cancel a completed job.");
             }
 
             if (job.Status == JobStatus.CANCELLED)
             {
                 logger.LogWarning("Attempt to cancel already cancelled job | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure("JOB_ALREADY_CANCELLED", "Job is already cancelled.");
+                return Result<bool>.Failure(ErrorCode.JobAlreadyCancelled, "Job is already cancelled.");
             }
 
             // Prevent cancellation during upload phase
             if (IsUploadPhase(job.Status))
             {
                 logger.LogWarning("Attempt to cancel job during upload phase | JobId: {JobId} | Status: {Status} | UserId: {UserId}", job.Id, job.Status, userId);
-                return Result<bool>.Failure("JOB_IN_UPLOAD_PHASE",
+                return Result<bool>.Failure(ErrorCode.JobInUploadPhase,
                     "Cannot cancel a job during upload phase. Please wait for the upload to complete.");
             }
 
             if (!job.Status.IsActive() && !job.Status.IsFailed())
             {
                 logger.LogWarning("Attempt to cancel non-cancellable job | JobId: {JobId} | Status: {Status} | UserId: {UserId}", job.Id, job.Status, userId);
-                return Result<bool>.Failure("JOB_NOT_CANCELLABLE",
+                return Result<bool>.Failure(ErrorCode.JobNotCancellable,
                     $"Job status {job.Status} cannot be cancelled.");
             }
 
             return Result.Success(true);
         }
 
-        private Result<bool> ValidateJobForRefund(UserJob job, int userId)
-        {
-            if (!job.Status.IsFailed())
-            {
-                logger.LogWarning("Attempt to refund non-failed job | JobId: {JobId} | Status: {Status} | UserId: {UserId}", job.Id, job.Status, userId);
-                return Result<bool>.Failure("JOB_NOT_FAILED",
-                    "Only failed jobs can be refunded.");
-            }
 
-            if (job.IsRefunded)
-            {
-                logger.LogWarning("Attempt to refund already refunded job | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure("JOB_ALREADY_REFUNDED", "This job has already been refunded.");
-            }
 
-            if (job.Invoice == null)
-            {
-                logger.LogWarning("Attempt to refund job without invoice | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure("INVOICE_NOT_FOUND", "Invoice not found for this job.");
-            }
 
-            if (job.Invoice.PaidAt == null)
-            {
-                logger.LogWarning("Attempt to refund job with unpaid invoice | JobId: {JobId} | InvoiceId: {InvoiceId} | UserId: {UserId}", job.Id, job.Invoice.Id, userId);
-                return Result<bool>.Failure("INVOICE_NOT_PAID", "Invoice has not been paid.");
-            }
-
-            if (job.Invoice.RefundedAt != null)
-            {
-                logger.LogWarning("Attempt to refund job with already refunded invoice | JobId: {JobId} | InvoiceId: {InvoiceId} | UserId: {UserId}", job.Id, job.Invoice.Id, userId);
-                return Result<bool>.Failure("INVOICE_ALREADY_REFUNDED", "Invoice has already been refunded.");
-            }
-
-            return Result.Success(true);
-        }
-
-        private Result<Invoice> ValidateInvoiceForJobCreation(Invoice? invoice, int userId)
-        {
-            if (invoice == null)
-            {
-                logger.LogWarning("Invoice not found for job creation | InvoiceId: {InvoiceId} | UserId: {UserId}", userId, userId);
-                return Result<Invoice>.Failure("INVOICE_NOT_FOUND", "Invoice not found.");
-            }
-
-            if (invoice.PaidAt == null)
-            {
-                logger.LogWarning("Attempt to create job from unpaid invoice | InvoiceId: {InvoiceId} | UserId: {UserId}", invoice.Id, userId);
-                return Result<Invoice>.Failure("INVOICE_NOT_PAID", "Invoice has not been paid.");
-            }
-
-            if (invoice.JobId != null)
-            {
-                logger.LogWarning("Attempt to create job from invoice that already has a job | InvoiceId: {InvoiceId} | JobId: {JobId} | UserId: {UserId}", invoice.Id, invoice.JobId, userId);
-                return Result<Invoice>.Failure("JOB_ALREADY_EXISTS", "A job has already been created for this invoice.");
-            }
-
-            return Result.Success(invoice);
-        }
 
         private Result<UserStorageProfile> ValidateStorageProfileForJob(UserStorageProfile? profile, int userId)
         {
             if (profile == null)
             {
                 logger.LogWarning("No active storage profile found for job creation | UserId: {UserId}", userId);
-                return Result<UserStorageProfile>.Failure("NO_STORAGE", "You don't have any stored or active Storage Destination");
+                return Result<UserStorageProfile>.Failure(ErrorCode.NoStorage, "You don't have any stored or active Storage Destination");
             }
 
             return Result.Success(profile);
@@ -691,12 +526,12 @@ namespace TorreClou.Application.Services
                     var nextRetry = existingJob.NextRetryAt.HasValue
                         ? $" Next retry: {existingJob.NextRetryAt.Value:u}" : "";
                     logger.LogWarning("Attempt to create job while existing job is retrying | ExistingJobId: {ExistingJobId} | RequestFileId: {RequestFileId} | UserId: {UserId}", existingJob.Id, requestFileId, userId);
-                    return Result<UserJob?>.Failure("JOB_RETRYING",
+                    return Result<UserJob?>.Failure(ErrorCode.JobRetrying,
                         $"Job {existingJob.Id} is currently retrying.{nextRetry}");
                 }
 
                 logger.LogWarning("Attempt to create job while active job exists | ExistingJobId: {ExistingJobId} | Status: {Status} | RequestFileId: {RequestFileId} | UserId: {UserId}", existingJob.Id, existingJob.Status, requestFileId, userId);
-                return Result<UserJob?>.Failure("JOB_ALREADY_EXISTS",
+                return Result<UserJob?>.Failure(ErrorCode.JobAlreadyExists,
                     $"Active job exists. ID: {existingJob.Id}, Status: {existingJob.Status}");
             }
 

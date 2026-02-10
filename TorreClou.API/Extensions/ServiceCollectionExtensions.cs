@@ -19,6 +19,8 @@ namespace TorreClou.API.Extensions
             services.AddExceptionHandler<GlobalExceptionHandler>();
             services.AddProblemDetails();
 
+            services.AddMemoryCache();
+
             return services;
         }
     }

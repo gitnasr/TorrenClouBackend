@@ -37,6 +37,13 @@ namespace TorreClou.API.Controllers.Storage
             var result = await storageProfilesService.DisconnectProfileAsync(UserId, id);
             return HandleResult(result);
         }
+
+        [HttpDelete("profiles/{id}")]
+        public async Task<IActionResult> DeleteProfile(int id)
+        {
+            var result = await storageProfilesService.DeleteStorageProfileAsync(UserId, id);
+            return HandleResult(result);
+        }
     }
 }
 

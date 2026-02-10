@@ -1,5 +1,3 @@
-using TorreClou.Core.Enums;
-using TorreClou.Core.Entities.Financals;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Entities.Torrents;
 using TorreClou.Core.Entities.Compliance;
@@ -11,21 +9,15 @@ namespace TorreClou.Core.Entities
         public string Email { get; set; } = string.Empty;
         public string FullName { get; set; } = string.Empty;
 
-        public string OAuthProvider { get; set; } = "Google";
-        public string OAuthSubjectId { get; set; } = string.Empty;
+        // Google Drive integration (separate from login)
+        public string? GoogleDriveEmail { get; set; }
+        public string? GoogleDriveRefreshToken { get; set; }
+        public DateTime? GoogleDriveTokenCreatedAt { get; set; }
+        public bool IsGoogleDriveConnected { get; set; } = false;
 
-        public string PhoneNumber { get; set; } = string.Empty;
-        public bool IsPhoneNumberVerified { get; set; } = false;
-        public RegionCode Region { get; set; } = RegionCode.Global;
-        public UserRole Role { get; set; } = UserRole.User;
-
+        // Navigation properties
         public ICollection<UserStorageProfile> StorageProfiles { get; set; } = [];
-
-        public ICollection<WalletTransaction> WalletTransactions { get; set; } = [];
-        public ICollection<UserJob> Jobs { get; set; } = [];
         public ICollection<UserStrike> Strikes { get; set; } = [];
         public ICollection<RequestedFile> UploadedTorrentFiles { get; set; } = [];
-
-        public decimal GetCurrentBalance() => WalletTransactions?.Sum(t => t.Amount) ?? 0;
     }
 }

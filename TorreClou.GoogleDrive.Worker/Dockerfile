@@ -29,8 +29,8 @@ RUN dotnet publish TorreClou.GoogleDrive.Worker.csproj -c Release --no-restore -
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app
 
-# Create temp directories (will be mounted to external storage)
-RUN mkdir -p /app/tmp /app/tmp/bundle /app/logs /app/data
+# Create temp directories and downloads mount point
+RUN mkdir -p /app/tmp /app/tmp/bundle /app/logs /app/data /app/downloads
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser
@@ -40,10 +40,6 @@ COPY --from=build /app/publish .
 
 # Explicitly copy appsettings.json from build stage source (ensures it's available)
 COPY --from=build /src/TorreClou.GoogleDrive.Worker/appsettings.json ./appsettings.json
-
-# Copy entrypoint script
-COPY TorreClou.GoogleDrive.Worker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
 
 # === Environment Variables ===
 ENV ASPNETCORE_ENVIRONMENT=Production
@@ -62,6 +58,9 @@ ENV DOTNET_EnableDiagnostics=0
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app
 
+# Switch to non-root user
+USER appuser
+
 # Set entry point
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["dotnet", "TorreClou.GoogleDrive.Worker.dll"]
 

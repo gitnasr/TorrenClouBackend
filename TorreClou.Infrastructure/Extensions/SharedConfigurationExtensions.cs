@@ -46,32 +46,52 @@ namespace TorreClou.Infrastructure.Extensions
                     outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}"
                 );
 
-            // Configure Loki sink
-            var lokiUrl = configuration["Observability:LokiUrl"];
+            // Configure Loki sink - supports both local (no auth) and cloud (with auth)
+            var lokiUrl = configuration["Observability:LokiUrl"] ?? "http://loki:3100";
             var lokiUser = configuration["Observability:LokiUsername"];
             var lokiKey = configuration["Observability:LokiApiKey"];
 
-            if (!string.IsNullOrEmpty(lokiUrl) && 
-                !string.IsNullOrEmpty(lokiUser) && 
-                !string.IsNullOrEmpty(lokiKey) &&
-                !lokiUrl.Contains("localhost"))
+            if (!string.IsNullOrEmpty(lokiUrl))
             {
-                // Test Loki connection first
-                TestLokiConnection(lokiUrl, lokiUser, lokiKey, serviceName, environment).Wait();
-                
-                loggerConfig.WriteTo.GrafanaLoki(
-                    lokiUrl,
-                    credentials: new LokiCredentials { Login = lokiUser, Password = lokiKey },
-                    labels: new[]
-                    {
-                        new LokiLabel { Key = "app", Value = "torreclou" },
-                        new LokiLabel { Key = "service", Value = serviceName },
-                        new LokiLabel { Key = "env", Value = environment ?? "unknown" }
-                    },
-                    propertiesAsLabels: new[] { "level" },
-                    batchPostingLimit: 5,
-                    period: TimeSpan.FromSeconds(1)
-                );
+                var isLocalLoki = lokiUrl.Contains("localhost") || lokiUrl.Contains("loki:3100");
+
+                if (!isLocalLoki && !string.IsNullOrEmpty(lokiUser) && !string.IsNullOrEmpty(lokiKey))
+                {
+                    // Cloud Loki with authentication
+                    TestLokiConnection(lokiUrl, lokiUser, lokiKey, serviceName, environment).Wait();
+
+                    loggerConfig.WriteTo.GrafanaLoki(
+                        lokiUrl,
+                        credentials: new LokiCredentials { Login = lokiUser, Password = lokiKey },
+                        labels: new[]
+                        {
+                            new LokiLabel { Key = "app", Value = "torreclou" },
+                            new LokiLabel { Key = "service", Value = serviceName },
+                            new LokiLabel { Key = "env", Value = environment ?? "unknown" }
+                        },
+                        propertiesAsLabels: new[] { "level" },
+                        batchPostingLimit: 5,
+                        period: TimeSpan.FromSeconds(1)
+                    );
+                }
+                else if (isLocalLoki)
+                {
+                    // Local Loki without authentication
+                    loggerConfig.WriteTo.GrafanaLoki(
+                        lokiUrl,
+                        labels: new[]
+                        {
+                            new LokiLabel { Key = "app", Value = "torreclou" },
+                            new LokiLabel { Key = "service", Value = serviceName },
+                            new LokiLabel { Key = "env", Value = environment ?? "unknown" }
+                        },
+                        propertiesAsLabels: new[] { "level" },
+                        batchPostingLimit: 10,
+                        period: TimeSpan.FromSeconds(2)
+                    );
+
+                    Console.WriteLine($"[LOKI] Configured for local Loki at {lokiUrl}");
+                }
             }
 
             Log.Logger = loggerConfig.CreateLogger();
@@ -206,12 +226,15 @@ namespace TorreClou.Infrastructure.Extensions
         /// <summary>
         /// Configures Hangfire Server for Workers
         /// </summary>
-        public static IServiceCollection AddSharedHangfireServer(this IServiceCollection services, string[] queues)
+        public static IServiceCollection AddSharedHangfireServer(this IServiceCollection services, IConfiguration configuration, string[] queues)
         {
+            // Get worker count from configuration, default to 10 to avoid connection exhaustion
+            var workerCount = configuration.GetValue<int>("Hangfire:WorkerCount", 10);
+
             services.AddHangfireServer(options =>
             {
-                options.WorkerCount = 50; // Reduced from 100 to reduce Redis connection contention
-                options.ServerTimeout = TimeSpan.FromMinutes(2); // Reduced from 5 minutes
+                options.WorkerCount = workerCount;
+                options.ServerTimeout = TimeSpan.FromMinutes(2);
                 options.HeartbeatInterval = TimeSpan.FromSeconds(30);
                 options.SchedulePollingInterval = TimeSpan.FromSeconds(10);
                 options.Queues = queues;

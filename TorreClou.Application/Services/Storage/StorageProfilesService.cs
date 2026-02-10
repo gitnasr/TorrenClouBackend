@@ -1,5 +1,6 @@
 ﻿using TorreClou.Core.DTOs.Storage;
 using TorreClou.Core.Entities.Jobs;
+using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
@@ -16,7 +17,7 @@ namespace TorreClou.Application.Services.Storage
             var profile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(spec);
             if (profile == null)
             {
-                return Result<UserStorageProfile>.Failure("PROFILE_NOT_FOUND", "Storage profile not found");
+                return Result<UserStorageProfile>.Failure(ErrorCode.ProfileNotFound, "Storage profile not found");
             }
             return Result.Success(profile);
         }
@@ -54,7 +55,7 @@ namespace TorreClou.Application.Services.Storage
 
             if (profile == null)
             {
-                return Result<StorageProfileDetailDto>.Failure("PROFILE_NOT_FOUND", "Storage profile not found");
+                return Result<StorageProfileDetailDto>.Failure(ErrorCode.ProfileNotFound, "Storage profile not found");
             }
 
             var dto = new StorageProfileDetailDto
@@ -81,7 +82,7 @@ namespace TorreClou.Application.Services.Storage
 
             if (profile == null)
             {
-                return Result.Failure("PROFILE_NOT_FOUND", "Storage profile not found");
+                return Result.Failure(ErrorCode.ProfileNotFound, "Storage profile not found");
             }
 
             // Unset all other default profiles for this user
@@ -111,12 +112,12 @@ namespace TorreClou.Application.Services.Storage
 
             if (profile == null)
             {
-                return Result.Failure("PROFILE_NOT_FOUND", "Storage profile not found");
+                return Result.Failure(ErrorCode.ProfileNotFound, "Storage profile not found");
             }
 
             if (!profile.IsActive)
             {
-                return Result.Failure("ALREADY_DISCONNECTED", "Storage profile is already disconnected");
+                return Result.Failure(ErrorCode.AlreadyDisconnected, "Storage profile is already disconnected");
             }
 
 
@@ -124,12 +125,12 @@ namespace TorreClou.Application.Services.Storage
             var activeJobs = await jobService.GetActiveJobsByStorageProfileIdAsync(profile.Id);
             if (activeJobs.IsFailure)
             {
-                return Result.Failure(activeJobs.Error.Code, activeJobs.Error.Message);
+                return Result.Failure(activeJobs.Error);
             }
 
             if (activeJobs.Value != null && activeJobs.Value.Any())
             {
-                return Result.Failure("PROFILE_IN_USE", "Cannot disconnect profile while there are active jobs using it");
+                return Result.Failure(ErrorCode.ProfileInUse, "Cannot disconnect profile while there are active jobs using it");
             }
 
 
@@ -144,7 +145,31 @@ namespace TorreClou.Application.Services.Storage
 
             await unitOfWork.Complete();
 
+
             return Result.Success();
+        }
+
+        public async Task<Result<bool>> DeleteStorageProfileAsync(int userId, int profileId)
+        {
+            var spec = new BaseSpecification<UserStorageProfile>(p => p.Id == profileId && p.UserId == userId);
+            var profile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(spec);
+
+            if (profile == null)
+                return Result<bool>.Failure(ErrorCode.ProfileNotFound, "Storage profile not found");
+
+            // Check for active jobs
+            var activeJobs = await jobService.GetActiveJobsByStorageProfileIdAsync(profileId);
+            if (activeJobs.IsSuccess && activeJobs.Value != null && activeJobs.Value.Any())
+                return Result<bool>.Failure(ErrorCode.ProfileInUse, "Cannot delete profile while there are active jobs using it");
+
+            // Soft delete by setting IsActive = false
+            profile.IsActive = false;
+            if (profile.IsDefault)
+                profile.IsDefault = false;
+
+            await unitOfWork.Complete();
+
+            return Result.Success(true);
         }
     }
 }
