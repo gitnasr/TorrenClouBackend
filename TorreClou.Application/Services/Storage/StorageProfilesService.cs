@@ -1,4 +1,6 @@
-﻿using TorreClou.Core.DTOs.Storage;
+﻿using System.Text.Json;
+using TorreClou.Core.DTOs.Storage;
+using TorreClou.Core.DTOs.Storage.GoogleDrive;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
@@ -40,6 +42,8 @@ namespace TorreClou.Application.Services.Storage
                     Email = p.Email,
                     IsDefault = p.IsDefault,
                     IsActive = p.IsActive,
+                    NeedsReauth = p.NeedsReauth,
+                    IsConfigured = IsProfileConfigured(p),
                     CreatedAt = p.CreatedAt
                 }).ToList();
 
@@ -66,6 +70,8 @@ namespace TorreClou.Application.Services.Storage
                 Email = profile.Email,
                 IsDefault = profile.IsDefault,
                 IsActive = profile.IsActive,
+                NeedsReauth = profile.NeedsReauth,
+                IsConfigured = IsProfileConfigured(profile),
                 CreatedAt = profile.CreatedAt,
                 UpdatedAt = profile.UpdatedAt
             };
@@ -170,6 +176,25 @@ namespace TorreClou.Application.Services.Storage
             await unitOfWork.Complete();
 
             return Result.Success(true);
+        }
+
+        /// <summary>
+        /// Checks if a storage profile has completed OAuth (has a refresh token).
+        /// </summary>
+        private static bool IsProfileConfigured(UserStorageProfile profile)
+        {
+            if (profile.ProviderType != StorageProviderType.GoogleDrive)
+                return true; // Non-GDrive profiles are always considered configured
+
+            try
+            {
+                var credentials = JsonSerializer.Deserialize<GoogleDriveCredentials>(profile.CredentialsJson);
+                return credentials != null && !string.IsNullOrEmpty(credentials.RefreshToken);
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

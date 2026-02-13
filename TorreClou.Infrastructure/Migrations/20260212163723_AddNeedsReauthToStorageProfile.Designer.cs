@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TorreClou.Infrastructure.Data;
@@ -11,9 +12,11 @@ using TorreClou.Infrastructure.Data;
 namespace TorreClou.Infrastructure.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260212163723_AddNeedsReauthToStorageProfile")]
+    partial class AddNeedsReauthToStorageProfile
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -277,9 +280,6 @@ namespace TorreClou.Infrastructure.Migrations
                     b.Property<bool>("NeedsReauth")
                         .HasColumnType("boolean");
 
-                    b.Property<int?>("OAuthCredentialId")
-                        .HasColumnType("integer");
-
                     b.Property<string>("ProfileName")
                         .IsRequired()
                         .HasColumnType("text");
@@ -295,8 +295,6 @@ namespace TorreClou.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("OAuthCredentialId");
 
                     b.HasIndex("UserId");
 
@@ -394,47 +392,6 @@ namespace TorreClou.Infrastructure.Migrations
                     b.ToTable("Users", "dev");
                 });
 
-            modelBuilder.Entity("TorreClou.Core.Entities.UserOAuthCredential", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("ClientId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("ClientSecret")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("RedirectUri")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId", "ClientId")
-                        .IsUnique();
-
-                    b.ToTable("UserOAuthCredentials", "dev");
-                });
-
             modelBuilder.Entity("TorreClou.Core.Entities.Compliance.UserStrike", b =>
                 {
                     b.HasOne("TorreClou.Core.Entities.User", "User")
@@ -497,18 +454,11 @@ namespace TorreClou.Infrastructure.Migrations
 
             modelBuilder.Entity("TorreClou.Core.Entities.Jobs.UserStorageProfile", b =>
                 {
-                    b.HasOne("TorreClou.Core.Entities.UserOAuthCredential", "OAuthCredential")
-                        .WithMany()
-                        .HasForeignKey("OAuthCredentialId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("TorreClou.Core.Entities.User", "User")
                         .WithMany("StorageProfiles")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("OAuthCredential");
 
                     b.Navigation("User");
                 });
@@ -522,17 +472,6 @@ namespace TorreClou.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("UploadedByUser");
-                });
-
-            modelBuilder.Entity("TorreClou.Core.Entities.UserOAuthCredential", b =>
-                {
-                    b.HasOne("TorreClou.Core.Entities.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("TorreClou.Core.Entities.Jobs.UserJob", b =>

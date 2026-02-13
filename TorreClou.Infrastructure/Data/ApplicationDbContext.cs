@@ -16,6 +16,7 @@ namespace TorreClou.Infrastructure.Data
         // --- Core Entities ---
         public DbSet<User> Users { get; set; }
         public DbSet<UserStorageProfile> UserStorageProfiles { get; set; }
+        public DbSet<UserOAuthCredential> UserOAuthCredentials { get; set; }
   
 
         // --- Job & File Entities ---
@@ -73,6 +74,20 @@ namespace TorreClou.Infrastructure.Data
                 .Property(p => p.ProviderType).HasConversion<string>();
             builder.Entity<UserStorageProfile>()
                 .Property(p => p.CredentialsJson).HasColumnType("jsonb");
+            builder.Entity<UserStorageProfile>()
+                .HasOne(p => p.OAuthCredential)
+                .WithMany()
+                .HasForeignKey(p => p.OAuthCredentialId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // --- OAuth Credentials ---
+            builder.Entity<UserOAuthCredential>()
+                .HasIndex(c => new { c.UserId, c.ClientId }).IsUnique();
+            builder.Entity<UserOAuthCredential>()
+                .HasOne(c => c.User)
+                .WithMany()
+                .HasForeignKey(c => c.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
 
       
 

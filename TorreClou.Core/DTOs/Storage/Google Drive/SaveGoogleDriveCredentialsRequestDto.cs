@@ -2,10 +2,17 @@ using System.ComponentModel.DataAnnotations;
 
 namespace TorreClou.Core.DTOs.Storage.GoogleDrive
 {
-    public record ConfigureGoogleDriveRequestDto
+    /// <summary>
+    /// Save reusable Google OAuth app credentials (ClientId, ClientSecret, RedirectUri).
+    /// These can be linked to multiple storage profiles.
+    /// </summary>
+    public record SaveGoogleDriveCredentialsRequestDto
     {
+        /// <summary>
+        /// Friendly label for these credentials (e.g. "My GCP Project").
+        /// </summary>
         [StringLength(255)]
-        public string ProfileName { get; init; } = string.Empty;
+        public string Name { get; init; } = string.Empty;
 
         [Required(ErrorMessage = "Client ID is required")]
         [StringLength(500)]
@@ -18,7 +25,5 @@ namespace TorreClou.Core.DTOs.Storage.GoogleDrive
         [Required(ErrorMessage = "Redirect URI is required")]
         [Url(ErrorMessage = "Redirect URI must be a valid URL")]
         public string RedirectUri { get; init; } = string.Empty;
-
-        public bool SetAsDefault { get; init; } = false;
     }
 }

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using TorreClou.Application.Services.OAuth;
 using TorreClou.Application.Validators;
+using TorreClou.Core.Entities;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
@@ -20,50 +21,220 @@ namespace TorreClou.Application.Services
     {
         private const string RedisKeyPrefixConfigure = "oauth:gdrive:state:";
 
-        public async Task<Result<string>> ConfigureAndGetAuthUrlAsync(int userId, ConfigureGoogleDriveRequestDto request)
+        /// <summary>
+        /// Save reusable OAuth app credentials — upserts by ClientId.
+        /// </summary>
+        public async Task<Result<(int CredentialId, string Name)>> SaveCredentialsAsync(int userId, SaveGoogleDriveCredentialsRequestDto request)
         {
             try
             {
-                // Validate credentials format
                 var credentialValidation = StorageProfileValidator.ValidateGoogleDriveCredentials(
                     request.ClientId, request.ClientSecret, request.RedirectUri);
                 if (credentialValidation.IsFailure)
-                    return Result<string>.Failure(credentialValidation.Error);
+                    return Result<(int, string)>.Failure(credentialValidation.Error);
 
-                // Validate profile name if provided
-                if (!string.IsNullOrWhiteSpace(request.ProfileName))
+                var finalName = !string.IsNullOrWhiteSpace(request.Name)
+                    ? request.Name.Trim()
+                    : "My GCP Credentials";
+
+                // Upsert: if user already saved a credential with the same ClientId, update it
+                var existingSpec = new BaseSpecification<UserOAuthCredential>(
+                    c => c.UserId == userId && c.ClientId == request.ClientId
+                );
+                var existing = await unitOfWork.Repository<UserOAuthCredential>().GetEntityWithSpec(existingSpec);
+
+                if (existing != null)
                 {
-                    var nameValidation = StorageProfileValidator.ValidateProfileName(request.ProfileName);
-                    if (nameValidation.IsFailure)
-                        return Result<string>.Failure(nameValidation.Error);
+                    existing.Name = finalName;
+                    existing.ClientSecret = request.ClientSecret;
+                    existing.RedirectUri = request.RedirectUri;
+                    await unitOfWork.Complete();
+
+                    logger.LogInformation("Updated OAuth credential {CredentialId} for user {UserId}", existing.Id, userId);
+                    return Result.Success((existing.Id, finalName));
                 }
 
-                // Build OAuth state
+                var credential = new UserOAuthCredential
+                {
+                    UserId = userId,
+                    Name = finalName,
+                    ClientId = request.ClientId,
+                    ClientSecret = request.ClientSecret,
+                    RedirectUri = request.RedirectUri
+                };
+
+                unitOfWork.Repository<UserOAuthCredential>().Add(credential);
+                await unitOfWork.Complete();
+
+                logger.LogInformation("Saved new OAuth credential {CredentialId} for user {UserId}", credential.Id, userId);
+                return Result.Success((credential.Id, finalName));
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error saving OAuth credentials for user {UserId}", userId);
+                return Result<(int, string)>.Failure(ErrorCode.UnexpectedError, "Failed to save credentials");
+            }
+        }
+
+        /// <summary>
+        /// List all saved OAuth app credentials for a user.
+        /// </summary>
+        public async Task<Result<List<OAuthCredentialDto>>> GetCredentialsAsync(int userId)
+        {
+            try
+            {
+                var spec = new BaseSpecification<UserOAuthCredential>(c => c.UserId == userId);
+                var credentials = await unitOfWork.Repository<UserOAuthCredential>().ListAsync(spec);
+
+                var dtos = credentials.Select(c => new OAuthCredentialDto
+                {
+                    Id = c.Id,
+                    Name = c.Name,
+                    ClientIdMasked = MaskClientId(c.ClientId),
+                    RedirectUri = c.RedirectUri,
+                    CreatedAt = c.CreatedAt
+                }).ToList();
+
+                return Result.Success(dtos);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error listing OAuth credentials for user {UserId}", userId);
+                return Result<List<OAuthCredentialDto>>.Failure(ErrorCode.UnexpectedError, "Failed to list credentials");
+            }
+        }
+
+        /// <summary>
+        /// Connect a new Google Drive account: creates profile + starts OAuth flow.
+        /// </summary>
+        public async Task<Result<string>> ConnectAsync(int userId, ConnectGoogleDriveRequestDto request)
+        {
+            try
+            {
+                // Load the credential
+                var credSpec = new BaseSpecification<UserOAuthCredential>(
+                    c => c.Id == request.CredentialId && c.UserId == userId
+                );
+                var credential = await unitOfWork.Repository<UserOAuthCredential>().GetEntityWithSpec(credSpec);
+                if (credential == null)
+                    return Result<string>.Failure(ErrorCode.CredentialNotFound, "OAuth credential not found");
+
+                var profileName = !string.IsNullOrWhiteSpace(request.ProfileName)
+                    ? request.ProfileName.Trim()
+                    : "My Google Drive";
+
+                // Create the profile immediately (unauthenticated — tokens come from callback)
+                var profile = new UserStorageProfile
+                {
+                    UserId = userId,
+                    ProfileName = profileName,
+                    ProviderType = StorageProviderType.GoogleDrive,
+                    Email = null,
+                    CredentialsJson = JsonSerializer.Serialize(new GoogleDriveCredentials()),
+                    IsDefault = false,
+                    IsActive = true,
+                    NeedsReauth = false,
+                    OAuthCredentialId = credential.Id
+                };
+
+                unitOfWork.Repository<UserStorageProfile>().Add(profile);
+
+                // Handle SetAsDefault
+                if (request.SetAsDefault)
+                {
+                    var allProfilesSpec = new BaseSpecification<UserStorageProfile>(p => p.UserId == userId && p.IsActive);
+                    var allProfiles = await unitOfWork.Repository<UserStorageProfile>().ListAsync(allProfilesSpec);
+                    foreach (var p in allProfiles)
+                        p.IsDefault = false;
+                    profile.IsDefault = true;
+                }
+                else
+                {
+                    var defaultProfileSpec = new BaseSpecification<UserStorageProfile>(
+                        p => p.UserId == userId && p.IsDefault && p.IsActive
+                    );
+                    var hasDefault = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(defaultProfileSpec) != null;
+                    if (!hasDefault)
+                        profile.IsDefault = true;
+                }
+
+                await unitOfWork.Complete();
+
+                // Build OAuth state referencing credentialId
                 var oauthState = new OAuthState
                 {
                     UserId = userId,
-                    ProfileName = request.ProfileName?.Trim(),
+                    ProfileId = profile.Id,
+                    ProfileName = profileName,
                     ExpiresAt = DateTime.UtcNow.AddMinutes(10),
-                    ClientId = request.ClientId,
-                    ClientSecret = request.ClientSecret,
-                    RedirectUri = request.RedirectUri,
-                    SetAsDefault = request.SetAsDefault
+                    OAuthCredentialId = credential.Id,
+                    SetAsDefault = profile.IsDefault
                 };
 
-                // Generate state hash and store in Redis
                 var stateHash = await oauthStateService.GenerateStateAsync(
                     oauthState, RedisKeyPrefixConfigure, TimeSpan.FromMinutes(10));
 
-                // Build authorization URL
                 var authUrl = GoogleOAuthUrlBuilder.BuildAuthorizationUrl(
-                    request.ClientId, request.RedirectUri, stateHash);
+                    credential.ClientId, credential.RedirectUri, stateHash);
 
-                logger.LogInformation("Generated OAuth URL for user {UserId} with user-provided credentials", userId);
+                logger.LogInformation("Created profile {ProfileId} and started OAuth for user {UserId} with credential {CredentialId}",
+                    profile.Id, userId, credential.Id);
                 return Result.Success(authUrl);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Error generating authorization URL with user credentials for user {UserId}", userId);
+                logger.LogError(ex, "Error connecting Google Drive for user {UserId}", userId);
+                return Result<string>.Failure(ErrorCode.AuthUrlError, "Failed to start connection flow");
+            }
+        }
+
+        /// <summary>
+        /// Re-initiate OAuth consent flow for a profile whose refresh token has expired.
+        /// </summary>
+        public async Task<Result<string>> ReauthenticateAsync(int userId, int profileId)
+        {
+            try
+            {
+                var spec = new BaseSpecification<UserStorageProfile>(
+                    p => p.Id == profileId && p.UserId == userId && p.IsActive
+                );
+                var profile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(spec);
+                if (profile == null)
+                    return Result<string>.Failure(ErrorCode.ProfileNotFound, "Storage profile not found");
+
+                if (profile.ProviderType != StorageProviderType.GoogleDrive)
+                    return Result<string>.Failure(ErrorCode.InvalidProfile, "Profile is not a Google Drive profile");
+
+                if (!profile.OAuthCredentialId.HasValue)
+                    return Result<string>.Failure(ErrorCode.MissingCredentials, "Profile has no linked OAuth credentials. Please connect using a saved credential.");
+
+                // Load the linked credential
+                var credential = await unitOfWork.Repository<UserOAuthCredential>().GetByIdAsync(profile.OAuthCredentialId.Value);
+                if (credential == null || credential.UserId != userId)
+                    return Result<string>.Failure(ErrorCode.CredentialNotFound, "Linked OAuth credential not found");
+
+                var oauthState = new OAuthState
+                {
+                    UserId = userId,
+                    ProfileId = profileId,
+                    ProfileName = profile.ProfileName,
+                    ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+                    OAuthCredentialId = credential.Id,
+                    SetAsDefault = profile.IsDefault
+                };
+
+                var stateHash = await oauthStateService.GenerateStateAsync(
+                    oauthState, RedisKeyPrefixConfigure, TimeSpan.FromMinutes(10));
+
+                var authUrl = GoogleOAuthUrlBuilder.BuildAuthorizationUrl(
+                    credential.ClientId, credential.RedirectUri, stateHash);
+
+                logger.LogInformation("Generated re-auth OAuth URL for profile {ProfileId} for user {UserId}", profileId, userId);
+                return Result.Success(authUrl);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error initiating re-auth for profile {ProfileId}, user {UserId}", profileId, userId);
                 return Result<string>.Failure(ErrorCode.AuthUrlError, "Failed to generate authorization URL");
             }
         }
@@ -72,31 +243,16 @@ namespace TorreClou.Application.Services
         {
             try
             {
-                // Consume OAuth state from Redis (atomically retrieves and deletes)
                 var storedState = await oauthStateService.ConsumeStateAsync<OAuthState>(state, RedisKeyPrefixConfigure);
-
                 if (storedState == null)
-                {
-                    return Result<int>.Failure(ErrorCode.InvalidState, "Invalid or expired OAuth state. Please use the /api/storage/gdrive/configure endpoint to connect Google Drive.");
-                }
+                    return Result<int>.Failure(ErrorCode.InvalidState, "Invalid or expired OAuth state. Please start the authentication flow again.");
 
-                // Validate expiration
                 if (storedState.ExpiresAt < DateTime.UtcNow)
-                {
                     return Result<int>.Failure(ErrorCode.InvalidState, "Expired OAuth state");
-                }
 
-                // Validate credentials are present in state (required - no env fallback)
-                if (string.IsNullOrEmpty(storedState.ClientId) || string.IsNullOrEmpty(storedState.ClientSecret) || string.IsNullOrEmpty(storedState.RedirectUri))
-                {
-                    return Result<int>.Failure(ErrorCode.MissingCredentials, "OAuth credentials not found. Please use the /api/storage/gdrive/configure endpoint.");
-                }
-
-                // Extract userId and profileName from validated state
                 var userId = storedState.UserId;
-                var profileName = storedState.ProfileName;
 
-                // Verify the user exists before creating a storage profile
+                // Verify user exists
                 var user = await unitOfWork.Repository<Core.Entities.User>().GetByIdAsync(userId);
                 if (user == null)
                 {
@@ -104,133 +260,96 @@ namespace TorreClou.Application.Services
                     return Result<int>.Failure(ErrorCode.UserNotFound, "User not found. Please log in and try again.");
                 }
 
-                // Use user-provided credentials from configure flow
-                var clientId = storedState.ClientId;
-                var clientSecret = storedState.ClientSecret;
-                var redirectUri = storedState.RedirectUri;
-                logger.LogInformation("Using user-provided credentials for token exchange (user {UserId})", userId);
+                // Load the credential from DB by OAuthCredentialId
+                var credential = await unitOfWork.Repository<UserOAuthCredential>().GetByIdAsync(storedState.OAuthCredentialId);
+                if (credential == null || credential.UserId != userId)
+                    return Result<int>.Failure(ErrorCode.CredentialNotFound, "OAuth credential not found. Please save credentials and try again.");
 
-                // Exchange authorization code for tokens via GoogleApiClient
+                var clientId = credential.ClientId;
+                var clientSecret = credential.ClientSecret;
+                var redirectUri = credential.RedirectUri;
+
+                logger.LogInformation("Processing OAuth callback for user {UserId}, profileId={ProfileId}, credentialId={CredentialId}",
+                    userId, storedState.ProfileId, storedState.OAuthCredentialId);
+
+                // Exchange authorization code for tokens
                 var tokenResult = await googleApiClient.ExchangeCodeForTokensAsync(code, clientId, clientSecret, redirectUri);
                 if (tokenResult.IsFailure)
-                {
                     return Result<int>.Failure(tokenResult.Error);
-                }
 
                 var tokenResponse = tokenResult.Value;
 
-                // Validate that refresh token is present (critical for long-running jobs)
                 if (string.IsNullOrEmpty(tokenResponse.RefreshToken))
-                {
-                    logger.LogCritical("OAuth token exchange succeeded but no refresh token received for user {UserId}. This may cause authentication issues for long-running jobs.", userId);
-                }
+                    logger.LogCritical("OAuth token exchange succeeded but no refresh token received for user {UserId}.", userId);
                 else
-                {
                     logger.LogInformation("Refresh token received successfully for user {UserId}", userId);
-                }
 
-                // Fetch user info (email) from Google via GoogleApiClient
+                // Fetch user info (email) from Google
                 string? email = null;
                 var userInfoResult = await googleApiClient.GetUserInfoAsync(tokenResponse.AccessToken);
                 if (userInfoResult.IsSuccess && !string.IsNullOrEmpty(userInfoResult.Value.Email))
-                {
                     email = userInfoResult.Value.Email;
-                }
 
                 UserStorageProfile profile;
-                bool isReactivation = false;
 
-                // First, check for inactive profile with the same email (reactivation case)
-                if (!string.IsNullOrEmpty(email))
+                if (storedState.ProfileId.HasValue)
                 {
-                    var inactiveProfileSpec = new BaseSpecification<UserStorageProfile>(
-                        p => p.UserId == userId
-                            && p.ProviderType == StorageProviderType.GoogleDrive
-                            && !p.IsActive
-                            && p.Email != null
-                            && p.Email.ToLower() == email.ToLower()
+                    // Load existing profile (created in ConnectAsync or existing for re-auth)
+                    var existingProfileSpec = new BaseSpecification<UserStorageProfile>(
+                        p => p.Id == storedState.ProfileId.Value && p.UserId == userId
                     );
-                    var inactiveProfile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(inactiveProfileSpec);
+                    var existingProfile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(existingProfileSpec);
+                    if (existingProfile == null)
+                        return Result<int>.Failure(ErrorCode.ProfileNotFound, "The profile associated with this authentication flow no longer exists.");
 
-                    if (inactiveProfile != null)
+                    // Check for duplicate email on OTHER profiles
+                    if (!string.IsNullOrEmpty(email))
                     {
-                        // Reactivate existing profile
-                        logger.LogInformation("Reactivating inactive profile {ProfileId} for user {UserId} with email {Email}", inactiveProfile.Id, userId, email);
-                        profile = inactiveProfile;
-                        profile.IsActive = true;
-
-                        // Update profile name if provided
-                        if (!string.IsNullOrWhiteSpace(profileName))
-                        {
-                            profile.ProfileName = profileName.Trim();
-                        }
-
-                        isReactivation = true;
-                    }
-                    else
-                    {
-                        // Check for active duplicate (prevent duplicates)
                         var duplicateSpec = new BaseSpecification<UserStorageProfile>(
                             p => p.UserId == userId
+                                && p.Id != existingProfile.Id
                                 && p.ProviderType == StorageProviderType.GoogleDrive
                                 && p.IsActive
                                 && p.Email != null
                                 && p.Email.ToLower() == email.ToLower()
                         );
                         var duplicateProfile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(duplicateSpec);
-
                         if (duplicateProfile != null)
-                        {
-                            logger.LogWarning("Attempt to connect duplicate email {Email} for user {UserId}", email, userId);
-                            return Result<int>.Failure(ErrorCode.DuplicateEmail, $"This Google account ({email}) is already connected. Please use a different account.");
-                        }
-
-                        // Create new profile
-                        var finalProfileName = !string.IsNullOrWhiteSpace(profileName)
-                            ? profileName.Trim()
-                            : (!string.IsNullOrEmpty(email)
-                                ? $"Google Drive ({email})"
-                                : "My Google Drive");
-
-                        profile = new UserStorageProfile
-                        {
-                            UserId = userId,
-                            ProfileName = finalProfileName,
-                            ProviderType = StorageProviderType.GoogleDrive,
-                            Email = email,
-                            IsDefault = false,
-                            IsActive = true
-                        };
-                        unitOfWork.Repository<UserStorageProfile>().Add(profile);
+                            return Result<int>.Failure(ErrorCode.DuplicateEmail, $"This Google account ({email}) is already connected to another profile.");
                     }
+
+                    profile = existingProfile;
+                    profile.IsActive = true;
+                    profile.NeedsReauth = false;
+                    profile.Email = email ?? profile.Email;
+                    profile.OAuthCredentialId = credential.Id; // ensure link
+
+                    logger.LogInformation("Updating profile {ProfileId} with new tokens for user {UserId}", profile.Id, userId);
                 }
                 else
                 {
-                    // No email available - create new profile
-                    var finalProfileName = !string.IsNullOrWhiteSpace(profileName)
-                        ? profileName.Trim()
-                        : "My Google Drive";
+                    // Fallback: no ProfileId in state (should not happen with new flow)
+                    var profileName = !string.IsNullOrWhiteSpace(storedState.ProfileName)
+                        ? storedState.ProfileName.Trim()
+                        : !string.IsNullOrEmpty(email) ? $"Google Drive ({email})" : "My Google Drive";
 
                     profile = new UserStorageProfile
                     {
                         UserId = userId,
-                        ProfileName = finalProfileName,
+                        ProfileName = profileName,
                         ProviderType = StorageProviderType.GoogleDrive,
                         Email = email,
                         IsDefault = false,
-                        IsActive = true
+                        IsActive = true,
+                        NeedsReauth = false,
+                        OAuthCredentialId = credential.Id
                     };
                     unitOfWork.Repository<UserStorageProfile>().Add(profile);
                 }
 
-                // Store/update tokens in CredentialsJson (includes OAuth app credentials from user)
+                // Store only tokens in CredentialsJson (app creds live in UserOAuthCredential)
                 var credentials = new GoogleDriveCredentials
                 {
-                    // OAuth app credentials (user-provided via /configure endpoint)
-                    ClientId = clientId,
-                    ClientSecret = clientSecret,
-                    RedirectUri = redirectUri,
-                    // OAuth tokens from Google
                     AccessToken = tokenResponse.AccessToken,
                     RefreshToken = tokenResponse.RefreshToken,
                     ExpiresAt = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn).ToString("O")
@@ -238,46 +357,35 @@ namespace TorreClou.Application.Services
 
                 profile.CredentialsJson = JsonSerializer.Serialize(credentials);
 
-                // Validate refresh token was saved
                 if (string.IsNullOrEmpty(tokenResponse.RefreshToken))
-                {
                     logger.LogError("CRITICAL: Refresh token is missing from token response. Profile {ProfileId} will not be able to refresh tokens automatically.", profile.Id);
-                }
                 else
-                {
                     logger.LogInformation("Credentials saved successfully for profile {ProfileId} with refresh token present.", profile.Id);
-                }
 
-                // If this is the first profile or user explicitly wants it as default, set it
-                var defaultProfileSpec = new BaseSpecification<UserStorageProfile>(
-                    p => p.UserId == userId && p.IsDefault && p.IsActive
-                );
-                var hasDefault = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(defaultProfileSpec) != null;
-
-                if (!hasDefault || storedState.SetAsDefault)
+                // Handle default profile logic (only for new profiles without PreExisting ProfileId)
+                if (!storedState.ProfileId.HasValue)
                 {
-                    // Unset other defaults if setting this one as default
-                    if (storedState.SetAsDefault && hasDefault)
+                    var defaultProfileSpec = new BaseSpecification<UserStorageProfile>(
+                        p => p.UserId == userId && p.IsDefault && p.IsActive
+                    );
+                    var hasDefault = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(defaultProfileSpec) != null;
+
+                    if (!hasDefault || storedState.SetAsDefault)
                     {
-                        var allProfilesSpec = new BaseSpecification<UserStorageProfile>(p => p.UserId == userId && p.IsActive);
-                        var allProfiles = await unitOfWork.Repository<UserStorageProfile>().ListAsync(allProfilesSpec);
-                        foreach (var p in allProfiles)
-                            p.IsDefault = false;
+                        if (storedState.SetAsDefault && hasDefault)
+                        {
+                            var allProfilesSpec = new BaseSpecification<UserStorageProfile>(p => p.UserId == userId && p.IsActive);
+                            var allProfiles = await unitOfWork.Repository<UserStorageProfile>().ListAsync(allProfilesSpec);
+                            foreach (var p in allProfiles)
+                                p.IsDefault = false;
+                        }
+                        profile.IsDefault = true;
                     }
-                    profile.IsDefault = true;
                 }
 
                 await unitOfWork.Complete();
 
-                if (isReactivation)
-                {
-                    logger.LogInformation("Google Drive reactivated successfully for user {UserId}, profile {ProfileId}", userId, profile.Id);
-                }
-                else
-                {
-                    logger.LogInformation("Google Drive connected successfully for user {UserId}, profile {ProfileId}", userId, profile.Id);
-                }
-
+                logger.LogInformation("Google Drive OAuth completed for user {UserId}, profile {ProfileId}", userId, profile.Id);
                 return Result.Success(profile.Id);
             }
             catch (Exception ex)
@@ -285,6 +393,14 @@ namespace TorreClou.Application.Services
                 logger.LogError(ex, "Error handling OAuth callback");
                 return Result<int>.Failure(ErrorCode.OAuthCallbackError, "Failed to complete OAuth flow");
             }
+        }
+
+        private static string MaskClientId(string clientId)
+        {
+            if (string.IsNullOrEmpty(clientId) || clientId.Length < 10)
+                return "****";
+
+            return $"{clientId[..4]}...{clientId[^30..]}";
         }
     }
 }

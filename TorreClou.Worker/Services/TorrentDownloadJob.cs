@@ -1,4 +1,5 @@
 ﻿using Hangfire;
+using Microsoft.Extensions.Configuration;
 using MonoTorrent;
 using MonoTorrent.Client;
 using TorreClou.Core.Entities.Jobs;
@@ -20,10 +21,11 @@ namespace TorreClou.Worker.Services
         ILogger<TorrentDownloadJob> logger,
         IRedisStreamService redisStreamService,
         ITransferSpeedMetrics speedMetrics,
-        IJobStatusService jobStatusService) : UserJobBase<TorrentDownloadJob>(unitOfWork, logger, jobStatusService), ITorrentDownloadJob
+        IJobStatusService jobStatusService,
+        IConfiguration configuration) : UserJobBase<TorrentDownloadJob>(unitOfWork, logger, jobStatusService), ITorrentDownloadJob
     {
-        // Default download path - can be made configurable via environment variable if needed
-        private const string DefaultDownloadPath = "/mnt/torrents";
+        // Default download path
+        private const string DefaultDownloadPath = "/app/downloads";
 
         // Save FastResume state every 30 seconds
         private static readonly TimeSpan FastResumeSaveInterval = TimeSpan.FromSeconds(30);
@@ -204,7 +206,7 @@ namespace TorreClou.Worker.Services
             }
 
             // Use default download path
-            var downloadBasePath = Environment.GetEnvironmentVariable("TORRENT_DOWNLOAD_PATH") ?? DefaultDownloadPath;
+            var downloadBasePath = configuration["TORRENT_DOWNLOAD_PATH"] ?? DefaultDownloadPath;
 
             // Verify download path exists
             if (!Directory.Exists(downloadBasePath))

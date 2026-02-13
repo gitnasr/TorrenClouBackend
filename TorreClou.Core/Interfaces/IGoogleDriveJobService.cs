@@ -19,7 +19,12 @@ namespace TorreClou.Core.Interfaces
         Task<Result<string>> CreateFolderAsync(string folderName, string? parentFolderId, string accessToken, CancellationToken cancellationToken = default);
 
 
-        Task<Result<(string AccessToken, int ExpiresIn)>> RefreshAccessTokenAsync(GoogleDriveCredentials credentials, CancellationToken cancellationToken = default);
+        /// <summary>
+        /// Refresh an access token using explicit app credentials and refresh token.
+        /// </summary>
+        Task<Result<(string AccessToken, int ExpiresIn)>> RefreshAccessTokenAsync(
+            string clientId, string clientSecret, string refreshToken,
+            UserStorageProfile? profile = null, CancellationToken cancellationToken = default);
 
       
         Task<Result<string>> GetAccessTokenAsync(UserStorageProfile profile, CancellationToken cancellationToken = default);

@@ -8,6 +8,9 @@ namespace TorreClou.Core.DTOs.Storage
         public string? Email { get; set; } // Email associated with the storage account
         public bool IsDefault { get; set; }
         public bool IsActive { get; set; }
+        public bool NeedsReauth { get; set; }
+        /// <summary>True when the profile has completed OAuth and has a refresh token.</summary>
+        public bool IsConfigured { get; set; }
         public DateTime CreatedAt { get; set; }
     }
 }

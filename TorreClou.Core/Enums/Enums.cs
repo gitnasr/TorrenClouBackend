@@ -11,6 +11,7 @@
         // Not Found
         NotFound,
         ProfileNotFound,
+        CredentialNotFound,
         TorrentNotFound,
         JobNotFound,
         UserNotFound,
@@ -71,6 +72,8 @@
         TokenError,
         RefreshFailed,
         RefreshError,
+        RefreshTokenExpired,
+        ProfileNotConfigured,
         S3Error,
         BucketAccessDenied,
 

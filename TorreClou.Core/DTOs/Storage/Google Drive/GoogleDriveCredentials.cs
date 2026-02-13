@@ -2,19 +2,12 @@ using System.Text.Json.Serialization;
 
 namespace TorreClou.Core.DTOs.Storage.GoogleDrive
 {
+    /// <summary>
+    /// OAuth tokens stored in UserStorageProfile.CredentialsJson (JSONB).
+    /// App credentials (ClientId/Secret) are now in UserOAuthCredential entity.
+    /// </summary>
     public class GoogleDriveCredentials
     {
-        // OAuth App Credentials (user-provided)
-        [JsonPropertyName("client_id")]
-        public string ClientId { get; set; } = string.Empty;
-
-        [JsonPropertyName("client_secret")]
-        public string ClientSecret { get; set; } = string.Empty;
-
-        [JsonPropertyName("redirect_uri")]
-        public string RedirectUri { get; set; } = string.Empty;
-
-        // OAuth Tokens (from Google)
         [JsonPropertyName("access_token")]
         public string AccessToken { get; set; } = string.Empty;
 

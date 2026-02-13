@@ -1,39 +1,22 @@
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using StackExchange.Redis;
 using TorreClou.Core.Interfaces;
-using TorreClou.Infrastructure.Data;
-using TorreClou.Infrastructure.Interceptors;
-using TorreClou.Infrastructure.Repositories;
 using TorreClou.Infrastructure.Services;
-using TorreClou.Infrastructure.Settings;
 using TorreClou.Application.Services.Google_Drive;
-using TorreClou.Infrastructure.Services.Redis;
 using TorreClou.Infrastructure.Services.Drive;
 using TorreClou.Infrastructure.Services.Handlers;
 
 namespace TorreClou.Infrastructure.Extensions
 {
+    /// <summary>
+    /// Registers API-specific infrastructure services.
+    /// Database, Redis, and Repository registrations are handled by
+    /// AddSharedDatabase() and AddSharedRedis() in SharedConfigurationExtensions.
+    /// </summary>
     public static class ServiceCollectionExtensions
     {
         public static IServiceCollection AddInfrastructureServices(this IServiceCollection services, IConfiguration configuration)
         {
-            services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
-            services.AddScoped<IUnitOfWork, UnitOfWork>();
-            services.AddSingleton<UpdateAuditableEntitiesInterceptor>();
-
-            // Redis
-            var redisSettings = configuration.GetSection("Redis").Get<RedisSettings>() ?? new RedisSettings();
-            services.AddSingleton<IConnectionMultiplexer>(
-                ConnectionMultiplexer.Connect(redisSettings.ConnectionString)
-            );
-
-            // Redis Services
-            services.AddSingleton<IRedisCacheService, RedisCacheService>();
-            services.AddScoped<IRedisLockService, RedisLockService>();
-            services.AddSingleton<IRedisStreamService, RedisStreamService>();
-
             services.AddScoped<ITokenService, TokenService>();
 
             // Google Drive Services (credentials configured per-user via API)
@@ -68,13 +51,6 @@ namespace TorreClou.Infrastructure.Extensions
             
             // Job Handler Factory
             services.AddScoped<IJobHandlerFactory, JobHandlerFactory>();
-
-            services.AddDbContext<ApplicationDbContext>((sp, options) =>
-            {
-                var interceptor = sp.GetRequiredService<UpdateAuditableEntitiesInterceptor>();
-                options.UseNpgsql(configuration.GetConnectionString("DefaultConnection"))
-                       .AddInterceptors(interceptor);
-            });
 
             return services;
         }

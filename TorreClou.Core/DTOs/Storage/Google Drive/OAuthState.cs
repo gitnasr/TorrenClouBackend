@@ -7,10 +7,17 @@
         public string? ProfileName { get; set; }
         public DateTime ExpiresAt { get; set; }
 
-        // User's OAuth app credentials (stored for callback)
-        public string ClientId { get; set; } = string.Empty;
-        public string ClientSecret { get; set; } = string.Empty;
-        public string RedirectUri { get; set; } = string.Empty;
+        /// <summary>
+        /// When set, the callback updates the existing profile instead of creating a new one.
+        /// Used for re-authentication flows.
+        /// </summary>
+        public int? ProfileId { get; set; }
+
+        /// <summary>
+        /// FK to UserOAuthCredential — the callback loads app credentials from this.
+        /// </summary>
+        public int OAuthCredentialId { get; set; }
+
         public bool SetAsDefault { get; set; } = false;
     }
 }

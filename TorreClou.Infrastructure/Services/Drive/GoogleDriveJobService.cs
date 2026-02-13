@@ -4,10 +4,12 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using TorreClou.Core.DTOs.Storage.GoogleDrive;
+using TorreClou.Core.Entities;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Entities.Jobs;
+using TorreClou.Core.Specifications;
 
 namespace TorreClou.Infrastructure.Services.Drive
 {
@@ -39,8 +41,21 @@ namespace TorreClou.Infrastructure.Services.Drive
                     return Result<string>.Failure(ErrorCode.NoRefreshToken, "No refresh token available");
                 }
 
-                // Use profile credentials if available (configure flow), otherwise use environment settings
-                var refreshResult = await RefreshAccessTokenAsync(credentials, cancellationToken);
+                // Load app credentials from linked UserOAuthCredential
+                if (!profile.OAuthCredentialId.HasValue)
+                {
+                    return Result<string>.Failure(ErrorCode.MissingCredentials, "Profile has no linked OAuth credentials. Please reconnect your Google Drive.");
+                }
+
+                var oauthCred = await unitOfWork.Repository<UserOAuthCredential>().GetByIdAsync(profile.OAuthCredentialId.Value);
+                if (oauthCred == null)
+                {
+                    return Result<string>.Failure(ErrorCode.CredentialNotFound, "Linked OAuth credential not found");
+                }
+
+                var refreshResult = await RefreshAccessTokenAsync(
+                    oauthCred.ClientId, oauthCred.ClientSecret, credentials.RefreshToken,
+                    profile, cancellationToken);
                 if (refreshResult.IsFailure)
                 {
                     return Result<string>.Failure(refreshResult.Error);
@@ -66,26 +81,24 @@ namespace TorreClou.Infrastructure.Services.Drive
             }
         }
 
-        public async Task<Result<(string AccessToken, int ExpiresIn)>> RefreshAccessTokenAsync(GoogleDriveCredentials credentials, CancellationToken cancellationToken = default)
+        public async Task<Result<(string AccessToken, int ExpiresIn)>> RefreshAccessTokenAsync(
+            string clientId, string clientSecret, string refreshToken,
+            UserStorageProfile? profile = null, CancellationToken cancellationToken = default)
         {
             try
             {
-                // Credentials must be present in profile (configured via /api/storage/gdrive/configure endpoint)
-                if (string.IsNullOrEmpty(credentials.ClientId) || string.IsNullOrEmpty(credentials.ClientSecret))
+                if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
                 {
-                    logger.LogError("Google Drive credentials not found in storage profile. User must configure via /api/storage/gdrive/configure endpoint.");
-                    return Result<(string, int)>.Failure(ErrorCode.MissingCredentials, "Google Drive credentials not found in storage profile. Please reconfigure your Google Drive connection.");
+                    logger.LogError("Google Drive app credentials are missing. User must save credentials via /api/storage/gdrive/credentials endpoint.");
+                    return Result<(string, int)>.Failure(ErrorCode.MissingCredentials, "Google Drive credentials not found. Please reconfigure your Google Drive connection.");
                 }
-
-                var clientId = credentials.ClientId;
-                var clientSecret = credentials.ClientSecret;
 
                 var httpClient = httpClientFactory.CreateClient();
                 var requestBody = new Dictionary<string, string>
                 {
                     { "client_id", clientId },
                     { "client_secret", clientSecret },
-                    { "refresh_token", credentials.RefreshToken! },
+                    { "refresh_token", refreshToken },
                     { "grant_type", "refresh_token" }
                 };
 
@@ -96,6 +109,16 @@ namespace TorreClou.Infrastructure.Services.Drive
                 {
                     var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
                     logger.LogError("Token refresh failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
+
+                    // Detect expired/revoked refresh token (invalid_grant)
+                    if (errorContent.Contains("invalid_grant", StringComparison.OrdinalIgnoreCase) && profile != null)
+                    {
+                        logger.LogWarning("Refresh token expired/revoked for profile {ProfileId}. Setting NeedsReauth flag.", profile.Id);
+                        profile.NeedsReauth = true;
+                        await unitOfWork.Complete();
+                        return Result<(string, int)>.Failure(ErrorCode.RefreshTokenExpired, "Refresh token has expired or been revoked. Please re-authenticate your Google Drive connection.");
+                    }
+
                     return Result<(string, int)>.Failure(ErrorCode.RefreshFailed, "Failed to refresh access token");
                 }
 
