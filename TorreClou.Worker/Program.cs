@@ -8,6 +8,7 @@ using TorreClou.Core.Options;
 using TorreClou.Infrastructure.Extensions;
 using TorreClou.Infrastructure.Filters;
 using TorreClou.Infrastructure.Services;
+using TorreClou.Infrastructure.Services.Redis;
 using TorreClou.Worker;
 using TorreClou.Worker.Services;
 
@@ -43,6 +44,7 @@ try
 
     // Worker Services
     builder.Services.AddHttpClient();
+    builder.Services.AddSingleton<IJobCancellationSignal, RedisJobCancellationSignal>();
     builder.Services.AddScoped<ITorrentDownloadJob, TorrentDownloadJob>();
     builder.Services.AddScoped<ITransferSpeedMetrics, TransferSpeedMetrics>();
     builder.Services.AddScoped<IJobStatusService, JobStatusService>();
