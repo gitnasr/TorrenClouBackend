@@ -8,7 +8,7 @@ namespace TorreClou.Application.Services
     {
         public async Task<bool> UserExistsAsync(string email)
         {
-            var spec = new BaseSpecification<User>(u => u.Email.Equals(email, StringComparison.CurrentCultureIgnoreCase));
+            var spec = new BaseSpecification<User>(u => u.Email.ToLower() == email.ToLower());
             var user = await unitOfWork.Repository<User>().GetEntityWithSpec(spec);
             return user != null;
         }
@@ -26,7 +26,7 @@ namespace TorreClou.Application.Services
         }
         public async Task<User?> GetUserByEmailAsync(string email)
         {
-            var spec = new BaseSpecification<User>(u => u.Email.Equals(email, StringComparison.CurrentCultureIgnoreCase));
+            var spec = new BaseSpecification<User>(u => u.Email.ToLower() == email.ToLower());
             return await unitOfWork.Repository<User>().GetEntityWithSpec(spec);
         }
 

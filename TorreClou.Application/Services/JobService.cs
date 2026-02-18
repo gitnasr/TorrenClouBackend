@@ -245,7 +245,7 @@ namespace TorreClou.Application.Services
             job.ErrorMessage = null;
             job.NextRetryAt = null;
             job.LastHeartbeat = DateTime.UtcNow;
-            job.CurrentState = $"Manually retried by {(userRole == UserRole.User)}";
+            job.CurrentState = $"Manually retried by {userRole}";
 
             await jobStatusService.TransitionJobStatusAsync(
                 job,

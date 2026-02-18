@@ -1,6 +1,6 @@
 ﻿using TorreClou.Core.Entities;
 
-namespace TorreClou.Application.Services.OAuth
+namespace TorreClou.Core.Interfaces
 {
     public interface IOAuthService
     {

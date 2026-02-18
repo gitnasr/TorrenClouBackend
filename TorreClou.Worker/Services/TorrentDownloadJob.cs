@@ -96,7 +96,6 @@ namespace TorreClou.Worker.Services
                 // 5. Create and configure MonoTorrent engine with FastResume
                 _engine = CreateEngine(downloadPath);
                 manager = await _engine.AddAsync(torrent, downloadPath);
-                var progress = manager.Progress;
                 foreach (var file in manager.Files)
                 {
                     // If selectedSet is null, select all files; otherwise check if file matches selected paths
@@ -127,8 +126,29 @@ namespace TorreClou.Worker.Services
                 // Start manager to load FastResume state
                 await manager.StartAsync();
 
+                // Poll until the manager settles into a stable state. FastResume triggers
+                // hash-checking before transitioning to Seeding or Downloading, so an
+                // immediate state check after StartAsync is unreliable.
+                const int SettleCheckIntervalMs = 250;
+                var settleDeadline = DateTime.UtcNow.AddSeconds(10);
+                while (DateTime.UtcNow < settleDeadline)
+                {
+                    var currentState = manager.State;
+                    if (currentState == TorrentState.Seeding ||
+                        currentState == TorrentState.Downloading ||
+                        currentState == TorrentState.Error ||
+                        currentState == TorrentState.Stopped)
+                        break;
 
-                // Check if torrent is already complete
+                    Logger.LogDebug("{LogPrefix} Waiting for manager state to settle | JobId: {JobId} | State: {State}",
+                        LogPrefix, job.Id, currentState);
+                    await Task.Delay(SettleCheckIntervalMs, cancellationToken);
+                }
+
+                Logger.LogInformation("{LogPrefix} Manager state settled | JobId: {JobId} | State: {State} | Progress: {Progress}%",
+                    LogPrefix, job.Id, manager.State, manager.Progress);
+
+                // Check if torrent is already complete (fast resume confirmed all pieces)
                 if (manager.Progress >= 100.0 && manager.State == TorrentState.Seeding)
                 {
                     Logger.LogInformation("{LogPrefix} Torrent already complete, dispatch to upload worker | JobId: {JobId}", LogPrefix, job.Id);
@@ -137,9 +157,9 @@ namespace TorreClou.Worker.Services
                 }
                 else
                 {
-                    // Download not complete, reset to downloading and continue with normal flow
-                    Logger.LogWarning("{LogPrefix} Torrent not complete, resuming to DOWNLOADING | JobId: {JobId} | Progress: {Progress}%",
-                        LogPrefix, job.Id, manager.Progress);
+                    // Download not complete, resume with normal monitoring flow
+                    Logger.LogWarning("{LogPrefix} Torrent not complete, resuming to DOWNLOADING | JobId: {JobId} | Progress: {Progress}% | State: {State}",
+                        LogPrefix, job.Id, manager.Progress, manager.State);
 
                     await JobStatusService.TransitionJobStatusAsync(
                         job,
@@ -148,7 +168,7 @@ namespace TorreClou.Worker.Services
                         metadata: new { resuming = true, currentProgress = manager.Progress });
                 }
 
-                var actualBytesDownloaded = (long)(downloadableSize * (progress / 100.0));
+                var actualBytesDownloaded = (long)(downloadableSize * (manager.Progress / 100.0));
                 job.BytesDownloaded = actualBytesDownloaded;
 
 

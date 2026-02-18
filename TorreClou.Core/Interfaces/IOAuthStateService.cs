@@ -1,4 +1,4 @@
-namespace TorreClou.Application.Services.OAuth
+namespace TorreClou.Core.Interfaces
 {
     public interface IOAuthStateService
     {
