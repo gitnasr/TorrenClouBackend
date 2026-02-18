@@ -155,6 +155,10 @@ namespace TorreClou.S3.Worker.Services
                     {
                         await UploadFileWithResumeAsync(job, file, s3Key, bucketName, s3UploadService, cancellationToken);
                     }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
                     catch (Exception ex)
                     {
                         await MarkJobFailedAsync(job, $"Upload failed for {file.Name}: {ex.Message}", hasRetries: true);

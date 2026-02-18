@@ -27,10 +27,10 @@ namespace TorreClou.Application.Validators
             if (string.IsNullOrEmpty(clientId) || !clientId.EndsWith(".apps.googleusercontent.com", StringComparison.OrdinalIgnoreCase))
                 throw new ValidationException("InvalidClientId", "Invalid Google Client ID format. It should end with .apps.googleusercontent.com");
 
-            if (string.IsNullOrEmpty(clientSecret))
+            if (string.IsNullOrWhiteSpace(clientSecret))
                 throw new ValidationException("InvalidClientSecret", "Client Secret is required");
 
-            if (string.IsNullOrEmpty(redirectUri))
+            if (string.IsNullOrWhiteSpace(redirectUri))
                 throw new ValidationException("InvalidRedirectUri", "Redirect URI is required");
         }
 

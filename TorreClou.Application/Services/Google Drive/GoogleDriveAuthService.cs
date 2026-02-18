@@ -205,7 +205,7 @@ namespace TorreClou.Application.Services
                 code, credential.ClientId, credential.ClientSecret, credential.RedirectUri);
 
             if (string.IsNullOrEmpty(tokenResponse.RefreshToken))
-                logger.LogCritical("OAuth token exchange succeeded but no refresh token received for user {UserId}.", userId);
+                logger.LogWarning("OAuth token exchange succeeded but no refresh token received for user {UserId}.", userId);
             else
                 logger.LogInformation("Refresh token received successfully for user {UserId}", userId);
 
@@ -272,11 +272,6 @@ namespace TorreClou.Application.Services
             };
 
             profile.CredentialsJson = JsonSerializer.Serialize(credentials);
-
-            if (string.IsNullOrEmpty(tokenResponse.RefreshToken))
-                logger.LogError("CRITICAL: Refresh token is missing from token response. Profile {ProfileId} will not be able to refresh tokens automatically.", profile.Id);
-            else
-                logger.LogInformation("Credentials saved successfully for profile {ProfileId} with refresh token present.", profile.Id);
 
             await profilesService.Save();
 

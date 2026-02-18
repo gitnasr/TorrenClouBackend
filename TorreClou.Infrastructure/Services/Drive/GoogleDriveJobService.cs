@@ -230,7 +230,7 @@ namespace TorreClou.Infrastructure.Services.Drive
                 }
                 catch (ExternalServiceException)
                 {
-                    logger.LogCritical("Resume URI invalid, starting fresh upload | File: {FileName}", fileName);
+                    logger.LogWarning("Resume URI invalid, starting fresh upload | File: {FileName}", fileName);
                     resumeUri = null;
                     if (progressContext.IsConfigured)
                         await progressContext.ClearResumeUriAsync(relativePath);
