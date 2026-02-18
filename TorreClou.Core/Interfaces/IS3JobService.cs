@@ -1,5 +1,4 @@
 using TorreClou.Core.Entities.Jobs;
-using TorreClou.Core.Shared;
 
 namespace TorreClou.Core.Interfaces
 {
@@ -8,10 +7,9 @@ namespace TorreClou.Core.Interfaces
     /// </summary>
     public interface IS3JobService
     {
-        Task<Result<(string AccessKey, string SecretKey, string Endpoint, string BucketName)>> VerifyAndGetCredentialsAsync(UserStorageProfile profile, CancellationToken cancellationToken = default);
+        Task<(string AccessKey, string SecretKey, string Endpoint, string BucketName)> VerifyAndGetCredentialsAsync(UserStorageProfile profile, CancellationToken cancellationToken = default);
 
-
-        Task<Result<bool>> TestBucketAccessAsync(
+        Task TestBucketAccessAsync(
             string endpoint,
             string accessKey,
             string secretKey,

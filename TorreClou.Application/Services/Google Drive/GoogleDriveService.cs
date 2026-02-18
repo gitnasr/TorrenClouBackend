@@ -2,8 +2,8 @@ using System.Web;
 using Microsoft.Extensions.Configuration;
 using TorreClou.Core.DTOs.OAuth;
 using TorreClou.Core.DTOs.Storage.GoogleDrive;
+using TorreClou.Core.Exceptions;
 using TorreClou.Core.Interfaces;
-using TorreClou.Core.Shared;
 
 namespace TorreClou.Application.Services.Google_Drive
 {
@@ -14,50 +14,39 @@ namespace TorreClou.Application.Services.Google_Drive
         IGoogleDriveAuthService googleDriveAuthService,
         IConfiguration configuration) : IGoogleDriveService
     {
-        public async Task<Result<SavedCredentialsDto>> SaveCredentialsAsync(int userId, SaveGoogleDriveCredentialsRequestDto request)
-        {
-            return await googleDriveAuthService.SaveCredentialsAsync(userId, request);
-        }
+        public Task<SavedCredentialsDto> SaveCredentialsAsync(int userId, SaveGoogleDriveCredentialsRequestDto request)
+            => googleDriveAuthService.SaveCredentialsAsync(userId, request);
 
-        public async Task<Result<List<OAuthCredentialDto>>> GetCredentialsAsync(int userId)
-        {
-            return await googleDriveAuthService.GetCredentialsAsync(userId);
-        }
+        public Task<List<OAuthCredentialDto>> GetCredentialsAsync(int userId)
+            => googleDriveAuthService.GetCredentialsAsync(userId);
 
-        public async Task<Result<string>> ConnectAsync(int userId, ConnectGoogleDriveRequestDto request)
-        {
-            return await googleDriveAuthService.ConnectAsync(userId, request);
-        }
+        public Task<string> ConnectAsync(int userId, ConnectGoogleDriveRequestDto request)
+            => googleDriveAuthService.ConnectAsync(userId, request);
 
-        public async Task<Result<string>> ReauthenticateAsync(int userId, int profileId)
-        {
-            return await googleDriveAuthService.ReauthenticateAsync(userId, profileId);
-        }
+        public Task<string> ReauthenticateAsync(int userId, int profileId)
+            => googleDriveAuthService.ReauthenticateAsync(userId, profileId);
 
         public async Task<string> GetGoogleCallback(string code, string state)
         {
-            var frontendUrl = configuration["FRONTEND_URL"] ?? "http://localhost:3000";
-
-            frontendUrl = frontendUrl.TrimEnd('/');
+            var frontendUrl = (configuration["FRONTEND_URL"] ?? "http://localhost:3000").TrimEnd('/');
             var redirectBase = $"{frontendUrl}/storage";
 
             if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
+                return $"{redirectBase}?error=INVALID_REQUEST&message={HttpUtility.UrlEncode("Missing code or state parameter")}";
+
+            try
             {
-                var errorRedirect = $"{redirectBase}?error=INVALID_REQUEST&message={HttpUtility.UrlEncode("Missing code or state parameter")}";
-                return errorRedirect;
+                var profileId = await googleDriveAuthService.HandleOAuthCallbackAsync(code, state);
+                return $"{redirectBase}?success=true&profileId={profileId}";
             }
-
-            var result = await googleDriveAuthService.HandleOAuthCallbackAsync(code, state);
-
-            if (result.IsFailure)
+            catch (DomainException ex)
             {
-                var errorRedirect = $"{redirectBase}?error={HttpUtility.UrlEncode(result.Error.Code.ToString())}&message={HttpUtility.UrlEncode(result.Error.Message)}";
-                return errorRedirect;
+                return $"{redirectBase}?error={HttpUtility.UrlEncode(ex.Code)}&message={HttpUtility.UrlEncode(ex.Message)}";
             }
-
-            // Success - redirect with profile ID
-            var successRedirect = $"{redirectBase}?success=true&profileId={result.Value}";
-            return successRedirect;
+            catch (Exception)
+            {
+                return $"{redirectBase}?error=InternalError&message={HttpUtility.UrlEncode("An unexpected error occurred")}";
+            }
         }
     }
 }

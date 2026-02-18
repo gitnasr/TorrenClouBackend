@@ -1,5 +1,4 @@
 using TorreClou.Core.DTOs.Storage.S3;
-using TorreClou.Core.Shared;
 
 namespace TorreClou.Core.Interfaces
 {
@@ -8,33 +7,31 @@ namespace TorreClou.Core.Interfaces
         /// <summary>
         /// Initiates a multipart upload and returns the UploadId
         /// </summary>
-        Task<Result<string>> InitiateUploadAsync(string bucketName, string s3Key, long fileSize, string? contentType = null, CancellationToken cancellationToken = default);
+        Task<string> InitiateUploadAsync(string bucketName, string s3Key, long fileSize, string? contentType = null, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Uploads a single part of a multipart upload
         /// </summary>
-        Task<Result<PartETag>> UploadPartAsync(string bucketName, string s3Key, string uploadId, int partNumber, Stream partData, CancellationToken cancellationToken = default);
+        Task<PartETag> UploadPartAsync(string bucketName, string s3Key, string uploadId, int partNumber, Stream partData, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Completes a multipart upload
         /// </summary>
-        Task<Result> CompleteUploadAsync(string bucketName, string s3Key, string uploadId, List<PartETag> parts, CancellationToken cancellationToken = default);
+        Task CompleteUploadAsync(string bucketName, string s3Key, string uploadId, List<PartETag> parts, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Aborts a multipart upload
         /// </summary>
-        Task<Result> AbortUploadAsync(string bucketName, string s3Key, string uploadId, CancellationToken cancellationToken = default);
+        Task AbortUploadAsync(string bucketName, string s3Key, string uploadId, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Lists all parts of an in-progress multipart upload
         /// </summary>
-        Task<Result<List<PartETag>>> ListPartsAsync(string bucketName, string s3Key, string uploadId, CancellationToken cancellationToken = default);
+        Task<List<PartETag>> ListPartsAsync(string bucketName, string s3Key, string uploadId, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Checks if an object already exists in S3
         /// </summary>
-        Task<Result<bool>> CheckObjectExistsAsync(string bucketName, string s3Key, CancellationToken cancellationToken = default);
-
+        Task<bool> CheckObjectExistsAsync(string bucketName, string s3Key, CancellationToken cancellationToken = default);
     }
 }
-

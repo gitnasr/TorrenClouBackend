@@ -1,9 +1,8 @@
 using Amazon.S3;
 using Amazon.S3.Model;
 using Microsoft.Extensions.Logging;
-using TorreClou.Core.Enums;
+using TorreClou.Core.Exceptions;
 using TorreClou.Core.Interfaces;
-using TorreClou.Core.Shared;
 using PartETag = TorreClou.Core.DTOs.Storage.S3.PartETag;
 
 namespace TorreClou.S3.Worker.Services
@@ -25,7 +24,7 @@ namespace TorreClou.S3.Worker.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public async Task<Result<string>> InitiateUploadAsync(string bucketName, string s3Key, long fileSize, string? contentType = null, CancellationToken cancellationToken = default)
+        public async Task<string> InitiateUploadAsync(string bucketName, string s3Key, long fileSize, string? contentType = null, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -41,23 +40,16 @@ namespace TorreClou.S3.Worker.Services
                 _logger.LogDebug("Initiated multipart upload | Bucket: {Bucket} | Key: {Key} | UploadId: {UploadId}",
                     bucketName, s3Key, response.UploadId);
 
-                return Result.Success(response.UploadId);
+                return response.UploadId;
             }
             catch (AmazonS3Exception ex)
             {
-                _logger.LogError(ex, "Failed to initiate multipart upload | Bucket: {Bucket} | Key: {Key}",
-                    bucketName, s3Key);
-                return Result<string>.Failure(ErrorCode.InitUploadFailed, $"Failed to initiate upload: {ex.Message}");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error initiating multipart upload | Bucket: {Bucket} | Key: {Key}",
-                    bucketName, s3Key);
-                return Result<string>.Failure(ErrorCode.InitUploadError, $"Unexpected error: {ex.Message}");
+                _logger.LogError(ex, "Failed to initiate multipart upload | Bucket: {Bucket} | Key: {Key}", bucketName, s3Key);
+                throw new ExternalServiceException("InitUploadFailed", $"Failed to initiate upload: {ex.Message}");
             }
         }
 
-        public async Task<Result<PartETag>> UploadPartAsync(string bucketName, string s3Key, string uploadId, int partNumber, Stream partData, CancellationToken cancellationToken = default)
+        public async Task<PartETag> UploadPartAsync(string bucketName, string s3Key, string uploadId, int partNumber, Stream partData, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -75,27 +67,20 @@ namespace TorreClou.S3.Worker.Services
                 _logger.LogDebug("Uploaded part | Bucket: {Bucket} | Key: {Key} | PartNumber: {PartNumber} | ETag: {ETag}",
                     bucketName, s3Key, partNumber, response.ETag);
 
-                return Result.Success(new PartETag
+                return new PartETag
                 {
                     PartNumber = partNumber,
                     ETag = response.ETag
-                });
+                };
             }
             catch (AmazonS3Exception ex)
             {
-                _logger.LogError(ex, "Failed to upload part | Bucket: {Bucket} | Key: {Key} | PartNumber: {PartNumber}",
-                    bucketName, s3Key, partNumber);
-                return Result<PartETag>.Failure(ErrorCode.UploadPartFailed, $"Failed to upload part: {ex.Message}");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error uploading part | Bucket: {Bucket} | Key: {Key} | PartNumber: {PartNumber}",
-                    bucketName, s3Key, partNumber);
-                return Result<PartETag>.Failure(ErrorCode.UploadPartError, $"Unexpected error: {ex.Message}");
+                _logger.LogError(ex, "Failed to upload part | Bucket: {Bucket} | Key: {Key} | PartNumber: {PartNumber}", bucketName, s3Key, partNumber);
+                throw new ExternalServiceException("UploadPartFailed", $"Failed to upload part: {ex.Message}");
             }
         }
 
-        public async Task<Result> CompleteUploadAsync(string bucketName, string s3Key, string uploadId, List<PartETag> parts, CancellationToken cancellationToken = default)
+        public async Task CompleteUploadAsync(string bucketName, string s3Key, string uploadId, List<PartETag> parts, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -117,24 +102,15 @@ namespace TorreClou.S3.Worker.Services
 
                 _logger.LogInformation("Completed multipart upload | Bucket: {Bucket} | Key: {Key} | UploadId: {UploadId} | Parts: {PartCount}",
                     bucketName, s3Key, uploadId, parts.Count);
-
-                return Result.Success();
             }
             catch (AmazonS3Exception ex)
             {
-                _logger.LogError(ex, "Failed to complete multipart upload | Bucket: {Bucket} | Key: {Key} | UploadId: {UploadId}",
-                    bucketName, s3Key, uploadId);
-                return Result.Failure(ErrorCode.CompleteUploadFailed, $"Failed to complete upload: {ex.Message}");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error completing multipart upload | Bucket: {Bucket} | Key: {Key} | UploadId: {UploadId}",
-                    bucketName, s3Key, uploadId);
-                return Result.Failure(ErrorCode.CompleteUploadError, $"Unexpected error: {ex.Message}");
+                _logger.LogError(ex, "Failed to complete multipart upload | Bucket: {Bucket} | Key: {Key} | UploadId: {UploadId}", bucketName, s3Key, uploadId);
+                throw new ExternalServiceException("CompleteUploadFailed", $"Failed to complete upload: {ex.Message}");
             }
         }
 
-        public async Task<Result> AbortUploadAsync(string bucketName, string s3Key, string uploadId, CancellationToken cancellationToken = default)
+        public async Task AbortUploadAsync(string bucketName, string s3Key, string uploadId, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -149,25 +125,21 @@ namespace TorreClou.S3.Worker.Services
 
                 _logger.LogInformation("Aborted multipart upload | Bucket: {Bucket} | Key: {Key} | UploadId: {UploadId}",
                     bucketName, s3Key, uploadId);
-
-                return Result.Success();
             }
             catch (AmazonS3Exception ex)
             {
+                // Don't fail if abort fails — upload may already be aborted or completed
                 _logger.LogWarning(ex, "Failed to abort multipart upload (may already be aborted) | Bucket: {Bucket} | Key: {Key} | UploadId: {UploadId}",
                     bucketName, s3Key, uploadId);
-                // Don't fail if abort fails - upload may already be aborted or completed
-                return Result.Success();
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Unexpected error aborting multipart upload | Bucket: {Bucket} | Key: {Key} | UploadId: {UploadId}",
                     bucketName, s3Key, uploadId);
-                return Result.Success(); // Don't fail on abort errors
             }
         }
 
-        public async Task<Result<List<PartETag>>> ListPartsAsync(string bucketName, string s3Key, string uploadId, CancellationToken cancellationToken = default)
+        public async Task<List<PartETag>> ListPartsAsync(string bucketName, string s3Key, string uploadId, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -189,23 +161,16 @@ namespace TorreClou.S3.Worker.Services
                 _logger.LogDebug("Listed parts for multipart upload | Bucket: {Bucket} | Key: {Key} | UploadId: {UploadId} | Parts: {PartCount}",
                     bucketName, s3Key, uploadId, parts.Count);
 
-                return Result.Success(parts);
+                return parts;
             }
             catch (AmazonS3Exception ex)
             {
-                _logger.LogError(ex, "Failed to list parts | Bucket: {Bucket} | Key: {Key} | UploadId: {UploadId}",
-                    bucketName, s3Key, uploadId);
-                return Result<List<PartETag>>.Failure(ErrorCode.ListPartsFailed, $"Failed to list parts: {ex.Message}");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error listing parts | Bucket: {Bucket} | Key: {Key} | UploadId: {UploadId}",
-                    bucketName, s3Key, uploadId);
-                return Result<List<PartETag>>.Failure(ErrorCode.ListPartsError, $"Unexpected error: {ex.Message}");
+                _logger.LogError(ex, "Failed to list parts | Bucket: {Bucket} | Key: {Key} | UploadId: {UploadId}", bucketName, s3Key, uploadId);
+                throw new ExternalServiceException("ListPartsFailed", $"Failed to list parts: {ex.Message}");
             }
         }
 
-        public async Task<Result<bool>> CheckObjectExistsAsync(string bucketName, string s3Key, CancellationToken cancellationToken = default)
+        public async Task<bool> CheckObjectExistsAsync(string bucketName, string s3Key, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -216,26 +181,22 @@ namespace TorreClou.S3.Worker.Services
                 };
 
                 await _s3Client.GetObjectMetadataAsync(request, cancellationToken);
-                return Result.Success(true);
+                return true;
             }
             catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
-                return Result.Success(false);
+                return false;
             }
             catch (AmazonS3Exception ex)
             {
-                _logger.LogWarning(ex, "Error checking object existence | Bucket: {Bucket} | Key: {Key}",
-                    bucketName, s3Key);
-                return Result.Success(false); // Assume doesn't exist on error
+                _logger.LogWarning(ex, "Error checking object existence | Bucket: {Bucket} | Key: {Key}", bucketName, s3Key);
+                return false; // Assume doesn't exist on error
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Unexpected error checking object existence | Bucket: {Bucket} | Key: {Key}",
-                    bucketName, s3Key);
-                return Result.Success(false);
+                _logger.LogWarning(ex, "Unexpected error checking object existence | Bucket: {Bucket} | Key: {Key}", bucketName, s3Key);
+                return false;
             }
         }
-
-
     }
 }

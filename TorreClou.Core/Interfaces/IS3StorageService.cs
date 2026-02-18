@@ -1,11 +1,10 @@
 using TorreClou.Core.DTOs.Storage;
-using TorreClou.Core.Shared;
 
 namespace TorreClou.Core.Interfaces
 {
     public interface IS3StorageService
     {
-        Task<Result<StorageProfileResultDto>> ConfigureS3StorageAsync(
+        Task<StorageProfileResultDto> ConfigureS3StorageAsync(
             int userId,
             string profileName,
             string s3Endpoint,

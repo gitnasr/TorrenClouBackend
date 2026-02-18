@@ -12,38 +12,31 @@ namespace TorreClou.API.Controllers.Storage
     {
         [HttpGet("profiles")]
         public async Task<IActionResult> GetStorageProfiles()
-        {
-            var result = await storageProfilesService.GetStorageProfilesAsync(UserId);
-            return HandleResult(result);
-        }
+            => Ok(await storageProfilesService.GetStorageProfilesAsync(UserId));
 
         [HttpGet("profiles/{id}")]
         public async Task<IActionResult> GetStorageProfile(int id)
-        {
-            var result = await storageProfilesService.GetStorageProfileAsync(UserId, id);
-            return HandleResult(result);
-        }
+            => Ok(await storageProfilesService.GetStorageProfileAsync(UserId, id));
 
         [HttpPost("profiles/{id}/set-default")]
         public async Task<IActionResult> SetDefaultProfile(int id)
         {
-            var result = await storageProfilesService.SetDefaultProfileAsync(UserId, id);
-            return HandleResult(result);
+            await storageProfilesService.SetDefaultProfileAsync(UserId, id);
+            return Ok();
         }
 
         [HttpPost("profiles/{id}/disconnect")]
         public async Task<IActionResult> DisconnectProfile(int id)
         {
-            var result = await storageProfilesService.DisconnectProfileAsync(UserId, id);
-            return HandleResult(result);
+            await storageProfilesService.DisconnectProfileAsync(UserId, id);
+            return Ok();
         }
 
         [HttpDelete("profiles/{id}")]
         public async Task<IActionResult> DeleteProfile(int id)
         {
-            var result = await storageProfilesService.DeleteStorageProfileAsync(UserId, id);
-            return HandleResult(result);
+            await storageProfilesService.DeleteStorageProfileAsync(UserId, id);
+            return NoContent();
         }
     }
 }
-

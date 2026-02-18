@@ -1,8 +1,7 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 using TorreClou.Core.DTOs.Auth;
-using TorreClou.Core.Enums;
+using TorreClou.Core.Exceptions;
 using TorreClou.Core.Interfaces;
-using TorreClou.Core.Shared;
 
 namespace TorreClou.Application.Services
 {
@@ -12,24 +11,19 @@ namespace TorreClou.Application.Services
         IUserService userService
         ) : IAuthService
     {
-        public async Task<Result<AuthResponseDto>> LoginAsync(string email, string password)
+        public async Task<AuthResponseDto> LoginAsync(string email, string password)
         {
-            // Get admin credentials from environment variables
             var adminEmail = configuration["ADMIN_EMAIL"];
             var adminPassword = configuration["ADMIN_PASSWORD"];
             var adminName = configuration["ADMIN_NAME"] ?? "TorrenClou Admin";
 
             if (string.IsNullOrEmpty(adminEmail) || string.IsNullOrEmpty(adminPassword))
-            {
-                return Result<AuthResponseDto>.Failure(
-                    ErrorCode.ServerConfigError,
-                    "Admin credentials not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD in environment variables.");
-            }
+                throw new BusinessRuleException("ServerConfigError", "Admin credentials not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD in environment variables.");
 
             if (!email.Equals(adminEmail, StringComparison.OrdinalIgnoreCase) || password != adminPassword)
             {
                 await Task.Delay(100); // Prevent timing attacks
-                return Result<AuthResponseDto>.Failure(ErrorCode.InvalidCredentials, "Invalid email or password");
+                throw new UnauthorizedException("InvalidCredentials", "Invalid email or password");
             }
 
             var user = await userService.GetUserByEmailAsync(adminEmail);
@@ -37,12 +31,12 @@ namespace TorreClou.Application.Services
 
             var token = tokenService.CreateToken(user);
 
-            return Result.Success(new AuthResponseDto
+            return new AuthResponseDto
             {
                 AccessToken = token,
                 Email = user.Email,
                 FullName = user.FullName
-            });
+            };
         }
     }
 }

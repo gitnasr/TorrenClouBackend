@@ -6,10 +6,11 @@ using TorreClou.Core.DTOs.Jobs;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Entities.Torrents;
 using TorreClou.Core.Enums;
+using TorreClou.Core.Exceptions;
 using TorreClou.Core.Extensions;
 using TorreClou.Core.Interfaces;
-using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
+
 namespace TorreClou.Application.Services
 {
     public class JobService(
@@ -22,26 +23,20 @@ namespace TorreClou.Application.Services
     {
         private const string JobStreamKey = "jobs:stream";
 
-        public async Task<Result<JobCreationResult>> CreateAndDispatchJobAsync(int torrentFileId, int userId, string[]? selectedFiles, int storageProfileId)
+        public async Task<JobCreationResult> CreateAndDispatchJobAsync(int torrentFileId, int userId, string[]? selectedFiles, int storageProfileId)
         {
             logger.LogInformation("Create and dispatch job requested | TorrentFileId: {TorrentFileId} | UserId: {UserId}", torrentFileId, userId);
-            // THATS NOT CORRECT, THE SERVICE HAS TO KNOW NOTHING ABOUT TORRENT, IT SHOULD BE FILE, THE FILE CAN BE TORRENT OR DIRECT URL, THE SERVICE SHOULD NOT CARE, IT JUST NEEDS A FILE WITH PATHS TO DOWNLOAD, THE JOB TYPE HANDLER SHOULD KNOW HOW TO HANDLE THE FILE BASED ON ITS TYPE
-            // 1. Load torrent file
+
             var torrentFile = await unitOfWork.Repository<RequestedFile>().GetByIdAsync(torrentFileId);
             if (torrentFile == null)
-                return Result<JobCreationResult>.Failure(ErrorCode.TorrentNotFound, "Torrent file not found.");
+                throw new NotFoundException("TorrentNotFound", "Torrent file not found.");
 
-            // 2. Check for existing active jobs
-            var existingJobCheck = await CheckExistingActiveJobAsync(userId, torrentFileId);
-            if (existingJobCheck.IsFailure)
-                return Result<JobCreationResult>.Failure(existingJobCheck.Error);
+            await CheckExistingActiveJobAsync(userId, torrentFileId);
 
-            // 3. Validate storage profile
             var storageProfile = await unitOfWork.Repository<UserStorageProfile>().GetByIdAsync(storageProfileId);
             if (storageProfile == null || storageProfile.UserId != userId || !storageProfile.IsActive)
-                return Result<JobCreationResult>.Failure(ErrorCode.InvalidStorageProfile, "Invalid or inactive storage profile.");
+                throw new ValidationException("InvalidStorageProfile", "Invalid or inactive storage profile.");
 
-            // 4. Create UserJob
             var defaultJobType = jobHandlerFactory.GetAllJobTypeHandlers().FirstOrDefault()?.JobType ?? JobType.Torrent;
             var job = new UserJob
             {
@@ -59,7 +54,6 @@ namespace TorreClou.Application.Services
             logger.LogInformation("Job created | JobId: {JobId} | StorageProfileId: {StorageProfileId} | RequestFileId: {RequestFileId}",
                 job.Id, storageProfile.Id, torrentFileId);
 
-            // 5. Record initial status in timeline
             await jobStatusService.RecordInitialJobStatusAsync(job, new
             {
                 storageProfileId = storageProfile.Id,
@@ -67,7 +61,6 @@ namespace TorreClou.Application.Services
                 selectedFilesCount = job.SelectedFilePaths?.Length ?? 0
             });
 
-            // 6. Publish to Stream
             await redisStreamService.PublishAsync(JobStreamKey, new Dictionary<string, string>
             {
                 { "jobId", job.Id.ToString() },
@@ -76,23 +69,22 @@ namespace TorreClou.Application.Services
                 { "createdAt", DateTime.UtcNow.ToString("O") }
             });
 
-            logger.LogInformation("Job creation and dispatch completed successfully | JobId: {JobId} | UserId: {UserId}",
-                job.Id, userId);
+            logger.LogInformation("Job creation and dispatch completed successfully | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
 
-            return Result.Success(new JobCreationResult
+            return new JobCreationResult
             {
                 JobId = job.Id,
                 StorageProfileId = storageProfile.Id,
-            });
+            };
         }
-        public async Task<Result<PaginatedResult<JobDto>>> GetUserJobsAsync(int userId, int pageNumber, int pageSize, JobStatus? status = null)
+
+        public async Task<PaginatedResult<JobDto>> GetUserJobsAsync(int userId, int pageNumber, int pageSize, JobStatus? status = null)
         {
             logger.LogDebug("Get user jobs requested | UserId: {UserId} | Page: {PageNumber} | PageSize: {PageSize} | Status: {Status}", userId, pageNumber, pageSize, status);
 
             var spec = new UserJobsSpecification(userId, pageNumber, pageSize, status);
             var countSpec = new BaseSpecification<UserJob>(job =>
-                job.UserId == userId && (status == null || job.Status == status)
-               );
+                job.UserId == userId && (status == null || job.Status == status));
 
             var jobs = await unitOfWork.Repository<UserJob>().ListAsync(spec);
             var totalCount = await unitOfWork.Repository<UserJob>().CountAsync(countSpec);
@@ -118,22 +110,20 @@ namespace TorreClou.Application.Services
                 UpdatedAt = job.UpdatedAt
             }).ToList();
 
-            return Result.Success(new PaginatedResult<JobDto>
+            return new PaginatedResult<JobDto>
             {
                 Items = items,
                 TotalCount = totalCount,
                 PageNumber = pageNumber,
                 PageSize = pageSize
-            });
+            };
         }
 
-        public async Task<Result<JobDto>> GetJobByIdAsync(int userId, int jobId, UserRole? userRole = null)
+        public async Task<JobDto> GetJobByIdAsync(int userId, int jobId, UserRole? userRole = null)
         {
             logger.LogDebug("Get job by ID requested | JobId: {JobId} | UserId: {UserId} | Role: {Role}", jobId, userId, userRole);
 
-            var spec = new BaseSpecification<UserJob>(job =>
-                job.Id == jobId &&
-                job.UserId == userId);
+            var spec = new BaseSpecification<UserJob>(job => job.Id == jobId && job.UserId == userId);
             spec.AddInclude(job => job.StorageProfile);
             spec.AddInclude(job => job.RequestFile);
 
@@ -142,13 +132,12 @@ namespace TorreClou.Application.Services
             if (job == null)
             {
                 logger.LogWarning("Job not found | JobId: {JobId} | UserId: {UserId}", jobId, userId);
-                return Result<JobDto>.Failure(ErrorCode.NotFound, "Job not found.");
+                throw new NotFoundException("JobNotFound", "Job not found.");
             }
 
-            // Fetch timeline
             var timeline = await jobStatusService.GetJobTimelineAsync(jobId);
 
-            return Result.Success(new JobDto
+            return new JobDto
             {
                 Id = job.Id,
                 StorageProfileId = job.StorageProfileId,
@@ -168,10 +157,10 @@ namespace TorreClou.Application.Services
                 CreatedAt = job.CreatedAt,
                 UpdatedAt = job.UpdatedAt,
                 Timeline = timeline.ToList()
-            });
+            };
         }
 
-        public async Task<Result<JobStatisticsDto>> GetUserJobStatisticsAsync(int userId)
+        public async Task<JobStatisticsDto> GetUserJobStatisticsAsync(int userId)
         {
             logger.LogDebug("Get user job statistics requested | UserId: {UserId}", userId);
 
@@ -184,8 +173,6 @@ namespace TorreClou.Application.Services
                 ActiveJobs = allJobs.Count(j => j.Status.IsActive()),
                 CompletedJobs = allJobs.Count(j => j.Status.IsCompleted()),
                 FailedJobs = allJobs.Count(j => j.Status.IsFailed()),
-
-                // Granular counts
                 QueuedJobs = allJobs.Count(j => j.Status == JobStatus.QUEUED),
                 DownloadingJobs = allJobs.Count(j => j.Status == JobStatus.DOWNLOADING),
                 PendingUploadJobs = allJobs.Count(j => j.Status == JobStatus.PENDING_UPLOAD),
@@ -194,22 +181,17 @@ namespace TorreClou.Application.Services
                 CancelledJobs = allJobs.Count(j => j.Status.IsCancelled())
             };
 
-            // Build user-based available filters: only statuses with at least one job
             statistics.StatusFilters = allJobs
                 .GroupBy(j => j.Status)
-                .Select(g => new JobStatusFilterDto
-                {
-                    Status = g.Key,
-                    Count = g.Count()
-                })
+                .Select(g => new JobStatusFilterDto { Status = g.Key, Count = g.Count() })
                 .Where(f => f.Count > 0)
                 .OrderByDescending(f => f.Count)
                 .ToList();
 
-            return Result.Success(statistics);
+            return statistics;
         }
 
-        public async Task<Result<IReadOnlyList<UserJob>>> GetActiveJobsByStorageProfileIdAsync(int storageProfileId)
+        public async Task<IReadOnlyList<UserJob>> GetActiveJobsByStorageProfileIdAsync(int storageProfileId)
         {
             logger.LogDebug("Get active jobs by storage profile requested | StorageProfileId: {StorageProfileId}", storageProfileId);
 
@@ -217,70 +199,54 @@ namespace TorreClou.Application.Services
             var activeJobs = await unitOfWork.Repository<UserJob>().ListAsync(spec);
 
             logger.LogDebug("Found {Count} active jobs for storage profile | StorageProfileId: {StorageProfileId}", activeJobs.Count, storageProfileId);
-            return Result.Success(activeJobs);
+            return activeJobs;
         }
 
-        public async Task<Result<bool>> RetryJobAsync(int jobId, int userId, UserRole? userRole = null)
+        public async Task RetryJobAsync(int jobId, int userId, UserRole? userRole = null)
         {
             logger.LogInformation("Retry job requested | JobId: {JobId} | UserId: {UserId} | Role: {Role}", jobId, userId, userRole);
 
-            // 1. Load job with all necessary includes
             var spec = new BaseSpecification<UserJob>(j => j.Id == jobId);
             spec.AddInclude(j => j.StorageProfile);
             spec.AddInclude(j => j.RequestFile);
             spec.AddInclude(j => j.User);
 
             var job = await unitOfWork.Repository<UserJob>().GetEntityWithSpec(spec);
+            ValidateJobExistsAndAuthorized(job, userId, userRole, "retry");
 
-            // 2. Validate job exists and user is authorized
-            var jobValidation = ValidateJobExistsAndAuthorized(job, userId, userRole, "retry");
-            if (jobValidation.IsFailure)
-                return Result<bool>.Failure(jobValidation.Error);
+            ValidateJobForRetry(job!, userId, userRole);
 
-            job = jobValidation.Value;
-
-            // 3. Validate job can be retried
-            var retryValidation = ValidateJobForRetry(job, userId, userRole);
-            if (retryValidation.IsFailure)
-                return retryValidation;
-
-            // 4. Cancel existing Hangfire jobs if they exist
             using var scope = serviceScopeFactory.CreateScope();
             var backgroundJobClient = scope.ServiceProvider.GetRequiredService<IBackgroundJobClient>();
             var monitoringApi = JobStorage.Current?.GetMonitoringApi();
 
-            await CancelExistingHangfireJobsAsync(job, backgroundJobClient, monitoringApi);
+            await CancelExistingHangfireJobsAsync(job!, backgroundJobClient, monitoringApi);
 
-            // 5. Determine retry strategy based on current state
-            var previousStatus = job.Status;
-            string? newHangfireJobId = null;
+            var previousStatus = job!.Status;
+            string? newHangfireJobId;
             JobStatus targetStatus;
             StatusChangeSource source = StatusChangeSource.User;
 
             if (IsUploadPhase(job.Status))
             {
-                // Retry from upload phase
                 targetStatus = JobStatus.PENDING_UPLOAD;
                 newHangfireJobId = await RetryUploadPhaseAsync(job, backgroundJobClient);
                 logger.LogInformation("Retrying job from upload phase | JobId: {JobId} | PreviousStatus: {PreviousStatus} | HangfireJobId: {HangfireJobId}", job.Id, previousStatus, newHangfireJobId);
             }
             else
             {
-                // Retry from download phase (or start from beginning)
                 targetStatus = JobStatus.QUEUED;
                 newHangfireJobId = await RetryDownloadPhaseAsync(job, backgroundJobClient);
                 logger.LogInformation("Retrying job from download phase | JobId: {JobId} | PreviousStatus: {PreviousStatus} | HangfireJobId: {HangfireJobId}", job.Id, previousStatus, newHangfireJobId);
             }
 
-            // 6. Update job state atomically
             job.HangfireJobId = newHangfireJobId;
-            job.HangfireUploadJobId = null; // Clear upload job ID if retrying from download
-            job.ErrorMessage = null; // Clear previous error
-            job.NextRetryAt = null; // Clear retry schedule
+            job.HangfireUploadJobId = null;
+            job.ErrorMessage = null;
+            job.NextRetryAt = null;
             job.LastHeartbeat = DateTime.UtcNow;
             job.CurrentState = $"Manually retried by {(userRole == UserRole.User)}";
 
-            // 7. Record status transition with full audit trail
             await jobStatusService.TransitionJobStatusAsync(
                 job,
                 targetStatus,
@@ -295,47 +261,33 @@ namespace TorreClou.Application.Services
                 });
 
             logger.LogInformation("Job retry completed successfully | JobId: {JobId} | TargetStatus: {TargetStatus} | UserId: {UserId}", job.Id, targetStatus, userId);
-            return Result.Success(true);
         }
 
-        public async Task<Result<bool>> CancelJobAsync(int jobId, int userId, UserRole? userRole = null)
+        public async Task CancelJobAsync(int jobId, int userId, UserRole? userRole = null)
         {
             logger.LogInformation("Cancel job requested | JobId: {JobId} | UserId: {UserId} | Role: {Role}", jobId, userId, userRole);
 
-            // 1. Load job with all necessary includes
             var spec = new BaseSpecification<UserJob>(j => j.Id == jobId);
             spec.AddInclude(j => j.StorageProfile);
 
             var job = await unitOfWork.Repository<UserJob>().GetEntityWithSpec(spec);
+            ValidateJobExistsAndAuthorized(job, userId, userRole, "cancel");
 
-            // 2. Validate job exists and user is authorized
-            var jobValidation = ValidateJobExistsAndAuthorized(job, userId, userRole, "cancel");
-            if (jobValidation.IsFailure)
-                return Result<bool>.Failure(jobValidation.Error);
+            ValidateJobForCancel(job!, userId, userRole);
 
-            job = jobValidation.Value;
-
-            // 3. Validate job can be cancelled
-            var cancelValidation = ValidateJobForCancel(job, userId, userRole);
-            if (cancelValidation.IsFailure)
-                return cancelValidation;
-
-            // 4. Cancel Hangfire jobs
             using var scope = serviceScopeFactory.CreateScope();
             var backgroundJobClient = scope.ServiceProvider.GetRequiredService<IBackgroundJobClient>();
             var monitoringApi = JobStorage.Current?.GetMonitoringApi();
 
-            await CancelExistingHangfireJobsAsync(job, backgroundJobClient, monitoringApi);
+            await CancelExistingHangfireJobsAsync(job!, backgroundJobClient, monitoringApi);
 
-            // 5. Execute job-type-specific cancellation (cleanup, stop manager, etc.)
-            var cancellationHandler = jobHandlerFactory.GetCancellationHandler(job.Type);
+            var cancellationHandler = jobHandlerFactory.GetCancellationHandler(job!.Type);
             if (cancellationHandler != null)
             {
                 await cancellationHandler.CancelJobAsync(job);
                 logger.LogDebug("Executed cancellation handler for job type {JobType} | JobId: {JobId}", job.Type, job.Id);
             }
 
-            // 6. Delete storage provider locks if exists
             if (job.StorageProfile != null)
             {
                 var storageHandler = jobHandlerFactory.GetStorageProviderHandler(job.StorageProfile.ProviderType);
@@ -346,15 +298,13 @@ namespace TorreClou.Application.Services
                 }
             }
 
-            // 8. Update job state
             job.CompletedAt = DateTime.UtcNow;
             job.HangfireJobId = null;
             job.HangfireUploadJobId = null;
-            job.CurrentState = $"Cancelled by User";
+            job.CurrentState = "Cancelled by User";
 
             StatusChangeSource source = StatusChangeSource.User;
 
-            // 9. Transition status (this will set job.Status and save all changes)
             await jobStatusService.TransitionJobStatusAsync(
                 job,
                 JobStatus.CANCELLED,
@@ -366,99 +316,76 @@ namespace TorreClou.Application.Services
                     cancelledAt = DateTime.UtcNow
                 });
 
-
             logger.LogInformation("Job cancellation completed successfully | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-            return Result.Success(true);
         }
 
+        // --- Guard Helpers ---
 
-        // --- Guard Check Helper Methods ---
-
-        private Result<UserJob> ValidateJobExistsAndAuthorized(UserJob? job, int userId, UserRole? userRole, string operation)
+        private void ValidateJobExistsAndAuthorized(UserJob? job, int userId, UserRole? userRole, string operation)
         {
             if (job == null)
             {
                 logger.LogWarning("Job not found for {Operation} | UserId: {UserId}", operation, userId);
-                return Result<UserJob>.Failure(ErrorCode.JobNotFound, "Job not found.");
+                throw new NotFoundException("JobNotFound", "Job not found.");
             }
-
-
-
-            return Result.Success(job);
         }
 
-        private Result<bool> ValidateJobForRetry(UserJob job, int userId, UserRole? userRole)
+        private void ValidateJobForRetry(UserJob job, int userId, UserRole? userRole)
         {
             if (job.Status == JobStatus.COMPLETED)
             {
                 logger.LogWarning("Attempt to retry completed job | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure(ErrorCode.JobCompleted, "Cannot retry a completed job.");
+                throw new BusinessRuleException("JobCompleted", "Cannot retry a completed job.");
             }
 
             if (job.Status == JobStatus.CANCELLED)
             {
                 logger.LogWarning("Attempt to retry cancelled job | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure(ErrorCode.JobCancelled, "Cannot retry a cancelled job.");
+                throw new BusinessRuleException("JobCancelled", "Cannot retry a cancelled job.");
             }
-
-
 
             if (job.Status.IsActive())
             {
                 logger.LogWarning("Attempt to retry active job | JobId: {JobId} | Status: {Status} | UserId: {UserId}", job.Id, job.Status, userId);
-                return Result<bool>.Failure(ErrorCode.JobActive,
-                    $"Job is currently {job.Status}. Wait for it to complete or fail before retrying.");
+                throw new BusinessRuleException("JobActive", $"Job is currently {job.Status}. Wait for it to complete or fail before retrying.");
             }
 
             if (job.StorageProfile == null || !job.StorageProfile.IsActive)
             {
                 logger.LogWarning("Attempt to retry job with inactive storage profile | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure(ErrorCode.StorageInactive,
-                    "The storage profile for this job is no longer active.");
+                throw new BusinessRuleException("StorageInactive", "The storage profile for this job is no longer active.");
             }
-
-            return Result.Success(true);
         }
 
-        private Result<bool> ValidateJobForCancel(UserJob job, int userId, UserRole? userRole)
+        private void ValidateJobForCancel(UserJob job, int userId, UserRole? userRole)
         {
             if (job.Status == JobStatus.COMPLETED)
             {
                 logger.LogWarning("Attempt to cancel completed job | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure(ErrorCode.JobCompleted, "Cannot cancel a completed job.");
+                throw new BusinessRuleException("JobCompleted", "Cannot cancel a completed job.");
             }
 
             if (job.Status == JobStatus.CANCELLED)
             {
                 logger.LogWarning("Attempt to cancel already cancelled job | JobId: {JobId} | UserId: {UserId}", job.Id, userId);
-                return Result<bool>.Failure(ErrorCode.JobAlreadyCancelled, "Job is already cancelled.");
+                throw new ConflictException("JobAlreadyCancelled", "Job is already cancelled.");
             }
 
-            // Prevent cancellation during upload phase
             if (IsUploadPhase(job.Status))
             {
                 logger.LogWarning("Attempt to cancel job during upload phase | JobId: {JobId} | Status: {Status} | UserId: {UserId}", job.Id, job.Status, userId);
-                return Result<bool>.Failure(ErrorCode.JobInUploadPhase,
-                    "Cannot cancel a job during upload phase. Please wait for the upload to complete.");
+                throw new BusinessRuleException("JobInUploadPhase", "Cannot cancel a job during upload phase. Please wait for the upload to complete.");
             }
 
             if (!job.Status.IsActive() && !job.Status.IsFailed())
             {
                 logger.LogWarning("Attempt to cancel non-cancellable job | JobId: {JobId} | Status: {Status} | UserId: {UserId}", job.Id, job.Status, userId);
-                return Result<bool>.Failure(ErrorCode.JobNotCancellable,
-                    $"Job status {job.Status} cannot be cancelled.");
+                throw new BusinessRuleException("JobNotCancellable", $"Job status {job.Status} cannot be cancelled.");
             }
-
-            return Result.Success(true);
         }
 
-
-
-
-
-        private async Task<Result<UserJob?>> CheckExistingActiveJobAsync(int userId, int requestFileId)
+        private async Task CheckExistingActiveJobAsync(int userId, int requestFileId)
         {
-            // Get all failed statuses from all registered job type handlers
             var failedStatuses = new HashSet<JobStatus>
             {
                 JobStatus.COMPLETED,
@@ -467,18 +394,13 @@ namespace TorreClou.Application.Services
             };
 
             foreach (var handler in jobHandlerFactory.GetAllJobTypeHandlers())
-            {
                 foreach (var status in handler.GetFailedStatuses())
-                {
                     failedStatuses.Add(status);
-                }
-            }
 
             var existingJobSpec = new BaseSpecification<UserJob>(j =>
                 j.UserId == userId &&
                 j.RequestFileId == requestFileId &&
-                !failedStatuses.Contains(j.Status)
-            );
+                !failedStatuses.Contains(j.Status));
 
             var existingJob = await unitOfWork.Repository<UserJob>().GetEntityWithSpec(existingJobSpec);
 
@@ -489,23 +411,18 @@ namespace TorreClou.Application.Services
                     var nextRetry = existingJob.NextRetryAt.HasValue
                         ? $" Next retry: {existingJob.NextRetryAt.Value:u}" : "";
                     logger.LogWarning("Attempt to create job while existing job is retrying | ExistingJobId: {ExistingJobId} | RequestFileId: {RequestFileId} | UserId: {UserId}", existingJob.Id, requestFileId, userId);
-                    return Result<UserJob?>.Failure(ErrorCode.JobRetrying,
-                        $"Job {existingJob.Id} is currently retrying.{nextRetry}");
+                    throw new BusinessRuleException("JobRetrying", $"Job {existingJob.Id} is currently retrying.{nextRetry}");
                 }
 
                 logger.LogWarning("Attempt to create job while active job exists | ExistingJobId: {ExistingJobId} | Status: {Status} | RequestFileId: {RequestFileId} | UserId: {UserId}", existingJob.Id, existingJob.Status, requestFileId, userId);
-                return Result<UserJob?>.Failure(ErrorCode.JobAlreadyExists,
-                    $"Active job exists. ID: {existingJob.Id}, Status: {existingJob.Status}");
+                throw new ConflictException("JobAlreadyExists", $"Active job exists. ID: {existingJob.Id}, Status: {existingJob.Status}");
             }
-
-            return Result.Success<UserJob?>(null);
         }
 
         private Task CancelExistingHangfireJobsAsync(UserJob job, Hangfire.IBackgroundJobClient backgroundJobClient, Hangfire.Storage.IMonitoringApi? monitoringApi)
         {
             try
             {
-                // Cancel download job if exists and is still active
                 if (!string.IsNullOrEmpty(job.HangfireJobId))
                 {
                     if (monitoringApi != null)
@@ -519,13 +436,11 @@ namespace TorreClou.Application.Services
                     }
                     else
                     {
-                        // If monitoring API is not available, try to delete anyway
                         BackgroundJob.Delete(job.HangfireJobId);
                         logger.LogDebug("Cancelled Hangfire download job (no monitoring API) | JobId: {JobId} | HangfireJobId: {HangfireJobId}", job.Id, job.HangfireJobId);
                     }
                 }
 
-                // Cancel upload job if exists and is still active
                 if (!string.IsNullOrEmpty(job.HangfireUploadJobId))
                 {
                     if (monitoringApi != null)
@@ -539,7 +454,6 @@ namespace TorreClou.Application.Services
                     }
                     else
                     {
-                        // If monitoring API is not available, try to delete anyway
                         BackgroundJob.Delete(job.HangfireUploadJobId);
                         logger.LogDebug("Cancelled Hangfire upload job (no monitoring API) | JobId: {JobId} | HangfireUploadJobId: {HangfireUploadJobId}", job.Id, job.HangfireUploadJobId);
                     }
@@ -547,8 +461,6 @@ namespace TorreClou.Application.Services
             }
             catch (Exception ex)
             {
-                // Log but don't fail - Hangfire might have already cleaned up
-                // This is a best-effort cleanup
                 logger.LogWarning(ex, "Error cancelling Hangfire jobs | JobId: {JobId}", job.Id);
             }
 
@@ -558,22 +470,17 @@ namespace TorreClou.Application.Services
         private Task<string> RetryUploadPhaseAsync(UserJob job, Hangfire.IBackgroundJobClient client)
         {
             if (job.StorageProfile == null)
-            {
                 throw new InvalidOperationException($"Job {job.Id} has no storage profile assigned");
-            }
 
             var storageHandler = jobHandlerFactory.GetStorageProviderHandler(job.StorageProfile.ProviderType);
             if (storageHandler == null)
-            {
                 throw new NotSupportedException($"No upload handler for provider: {job.StorageProfile.ProviderType}");
-            }
 
             return Task.FromResult(storageHandler.EnqueueUploadJob(job.Id, client));
         }
 
         private Task<string> RetryDownloadPhaseAsync(UserJob job, Hangfire.IBackgroundJobClient client)
         {
-            // Reset download progress if retrying from beginning
             if (job.Status.IsFailed())
             {
                 job.BytesDownloaded = 0;
@@ -582,27 +489,18 @@ namespace TorreClou.Application.Services
 
             var jobTypeHandler = jobHandlerFactory.GetJobTypeHandler(job.Type);
             if (jobTypeHandler == null)
-            {
                 throw new NotSupportedException($"No download handler for job type: {job.Type}");
-            }
 
             return Task.FromResult(jobTypeHandler.EnqueueDownloadJob(job.Id, client));
         }
 
         private bool IsUploadPhase(JobStatus status)
         {
-            // Use the first available job type handler to determine if status is in upload phase
-            // This is a reasonable default since upload phase statuses are typically shared across job types
             var jobTypeHandlers = jobHandlerFactory.GetAllJobTypeHandlers();
             foreach (var handler in jobTypeHandlers)
-            {
                 if (handler.IsUploadPhaseStatus(status))
-                {
                     return true;
-                }
-            }
             return false;
         }
     }
 }
-

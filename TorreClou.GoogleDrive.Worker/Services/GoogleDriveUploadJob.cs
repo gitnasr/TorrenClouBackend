@@ -44,7 +44,6 @@ namespace TorreClou.GoogleDrive.Worker.Services
             if (!await ValidateEnvironmentAsync(job)) return;
 
             var accessToken = await AuthenticateAsync(job, cancellationToken);
-            if (accessToken == null) return;
 
             var allFiles = GetFilesToUpload(job.DownloadPath!);
             if (allFiles.Length == 0)
@@ -59,7 +58,6 @@ namespace TorreClou.GoogleDrive.Worker.Services
             ConfigureProgressContext(job, totalBytes);
 
             var rootFolderId = await EnsureRootFolderExistsAsync(job, accessToken, cancellationToken);
-            if (rootFolderId == null) return;
 
             var filesToProcess = await FilterAlreadyUploadedFilesAsync(allFiles, job.DownloadPath!);
             var folderIdMap = await CreateFolderHierarchyAsync([.. filesToProcess], job.DownloadPath!, rootFolderId, accessToken, cancellationToken);
@@ -151,20 +149,15 @@ namespace TorreClou.GoogleDrive.Worker.Services
             return true;
         }
 
-        private async Task<string?> AuthenticateAsync(UserJob job, CancellationToken token)
+        private async Task<string> AuthenticateAsync(UserJob job, CancellationToken token)
         {
             await UpdateHeartbeatAsync(job, "Authenticating...");
 
-            var tokenResult = await googleDriveService.GetAccessTokenAsync(job.StorageProfile, token);
-            if (tokenResult.IsFailure)
-            {
-                await MarkJobFailedAsync(job, $"Auth failed: {tokenResult.Error.Message}");
-                return null;
-            }
+            var accessToken = await googleDriveService.GetAccessTokenAsync(job.StorageProfile!, token);
 
             // Token refresh has already persisted changes, but ensure we save any other job updates
             await UnitOfWork.Complete();
-            return tokenResult.Value;
+            return accessToken;
         }
 
         private void ConfigureProgressContext(UserJob job, long totalBytes)
@@ -274,7 +267,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
             }
         }
 
-        private async Task<string?> EnsureRootFolderExistsAsync(UserJob job, string accessToken, CancellationToken token)
+        private async Task<string> EnsureRootFolderExistsAsync(UserJob job, string accessToken, CancellationToken token)
         {
             await UpdateHeartbeatAsync(job, "Checking Google Drive folder...");
 
@@ -282,16 +275,10 @@ namespace TorreClou.GoogleDrive.Worker.Services
             if (!string.IsNullOrEmpty(rootId)) return rootId;
 
             var folderName = $"Torrent_{job.Id}_{DateTime.UtcNow:yyyyMMdd_HHmmss}";
-            var result = await googleDriveService.CreateFolderAsync(folderName, null, accessToken, token);
+            var newRootId = await googleDriveService.CreateFolderAsync(folderName, null, accessToken, token);
 
-            if (result.IsFailure)
-            {
-                await MarkJobFailedAsync(job, $"Failed to create root folder: {result.Error.Message}");
-                return null;
-            }
-
-            await progressContext.SetRootFolderIdAsync(job.Id, result.Value);
-            return result.Value;
+            await progressContext.SetRootFolderIdAsync(job.Id, newRootId);
+            return newRootId;
         }
 
         private async Task<Dictionary<string, string>> CreateFolderHierarchyAsync(
@@ -323,13 +310,18 @@ namespace TorreClou.GoogleDrive.Worker.Services
 
                 var parentId = map.TryGetValue(parentRel, out var pid) ? pid : rootId;
 
-                // Use FindOrCreateFolderAsync to check for existing folder before creating
-                var result = await googleDriveService.FindOrCreateFolderAsync(name, parentId, accessToken, token);
-
-                if (result.IsSuccess)
-                    map[relPath] = result.Value;
-                else
+                try
+                {
+                    // Use FindOrCreateFolderAsync to check for existing folder before creating
+                    var folderId = await googleDriveService.FindOrCreateFolderAsync(name, parentId, accessToken, token);
+                    map[relPath] = folderId;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "{LogPrefix} Failed to create folder '{Name}', falling back to parent | JobId: {JobId}",
+                        LogPrefix, name, files.FirstOrDefault()?.FullName);
                     map[relPath] = parentId; // Fallback to parent
+                }
             }
             return map;
         }
@@ -351,35 +343,49 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 var relPath = Path.GetRelativePath(job.DownloadPath!, file.FullName);
                 var folderId = folderMap.TryGetValue(relDir, out var fid) ? fid : folderMap["."];
 
-                // Check Drive First (Fallback if Redis was flushed)
-                var exists = await googleDriveService.CheckFileExistsAsync(folderId, file.Name, accessToken, token);
-                if (exists.IsSuccess && !string.IsNullOrEmpty(exists.Value))
+                // Check Drive First (Fallback if Redis was flushed) — non-fatal
+                try
                 {
-                    await progressContext.SetCompletedFileAsync(relPath, exists.Value);
-                    await progressContext.MarkFileCompletedAsync(file.Name, file.Length);
-                    continue;
+                    var existingFileId = await googleDriveService.CheckFileExistsAsync(folderId, file.Name, accessToken, token);
+                    if (!string.IsNullOrEmpty(existingFileId))
+                    {
+                        await progressContext.SetCompletedFileAsync(relPath, existingFileId);
+                        await progressContext.MarkFileCompletedAsync(file.Name, file.Length);
+                        continue;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "{LogPrefix} CheckFileExists failed for {File}, proceeding with upload", LogPrefix, file.Name);
                 }
 
                 // Upload
-                var upload = await googleDriveService.UploadFileAsync(
-                    file.FullName, file.Name, folderId, accessToken, relPath, token);
-
-                if (upload.IsSuccess)
+                try
                 {
-                    await progressContext.SetCompletedFileAsync(relPath, upload.Value);
+                    var fileId = await googleDriveService.UploadFileAsync(
+                        file.FullName, file.Name, folderId, accessToken, relPath, token);
+
+                    await progressContext.SetCompletedFileAsync(relPath, fileId);
                     await progressContext.MarkFileCompletedAsync(file.Name, file.Length);
                 }
-                else
+                catch (Exception ex)
                 {
                     result.FailedFiles++;
-                    Logger.LogCritical("{LogPrefix} Upload failed for {File}: {Error}", LogPrefix, file.Name, upload.Error.Message);
+                    Logger.LogCritical(ex, "{LogPrefix} Upload failed for {File}", LogPrefix, file.Name);
 
-                    // Recover partial progress
-                    var resumeUri = await progressContext.GetResumeUriAsync(relPath);
-                    if (!string.IsNullOrEmpty(resumeUri))
+                    // Recover partial progress — non-fatal
+                    try
                     {
-                        var status = await googleDriveService.QueryUploadStatusAsync(resumeUri, file.Length, accessToken, token);
-                        if (status.IsSuccess) await progressContext.MarkBytesCompletedAsync(file.Name, status.Value);
+                        var resumeUri = await progressContext.GetResumeUriAsync(relPath);
+                        if (!string.IsNullOrEmpty(resumeUri))
+                        {
+                            var resumedBytes = await googleDriveService.QueryUploadStatusAsync(resumeUri, file.Length, accessToken, token);
+                            await progressContext.MarkBytesCompletedAsync(file.Name, resumedBytes);
+                        }
+                    }
+                    catch (Exception resumeEx)
+                    {
+                        Logger.LogWarning(resumeEx, "{LogPrefix} Failed to recover partial progress for {File}", LogPrefix, file.Name);
                     }
                 }
             }

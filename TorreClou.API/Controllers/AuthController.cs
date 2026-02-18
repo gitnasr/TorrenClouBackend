@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using TorreClou.Core.DTOs.Auth;
 using TorreClou.Core.Interfaces;
 
@@ -14,7 +14,7 @@ public class AuthController(IAuthService authService) : BaseApiController
     [HttpPost("login")]
     public async Task<IActionResult> LoginAsync([FromBody] LoginRequestDto request)
     {
-        var result = await authService.LoginAsync(request.Email, request.Password);
-        return HandleResult(result);
+        var response = await authService.LoginAsync(request.Email, request.Password);
+        return Ok(response);
     }
 }

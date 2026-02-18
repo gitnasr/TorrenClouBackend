@@ -22,7 +22,7 @@ namespace TorreClou.API.Controllers.Storage.S3
                 request.S3Region,
                 request.SetAsDefault);
 
-            return HandleResult(result);
+            return Ok(result);
         }
     }
 }

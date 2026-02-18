@@ -5,15 +5,13 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using TorreClou.Core.DTOs.Storage.GoogleDrive;
 using TorreClou.Core.Entities;
-using TorreClou.Core.Enums;
-using TorreClou.Core.Interfaces;
-using TorreClou.Core.Shared;
 using TorreClou.Core.Entities.Jobs;
+using TorreClou.Core.Exceptions;
+using TorreClou.Core.Interfaces;
 using TorreClou.Core.Specifications;
 
 namespace TorreClou.Infrastructure.Services.Drive
 {
-    // Google Drive credentials are configured per-user via API (stored in UserStorageProfile.CredentialsJson)
     public class GoogleDriveJobService(
         IHttpClientFactory httpClientFactory,
         ILogger<GoogleDriveJobService> logger,
@@ -21,194 +19,139 @@ namespace TorreClou.Infrastructure.Services.Drive
         IUnitOfWork unitOfWork,
         IRedisLockService redisLockService) : IGoogleDriveJobService
     {
-
-        // Upload chunk size: 10 MB (must be multiple of 256 KB per Google's requirements)
         private const int ChunkSize = 10 * 1024 * 1024;
 
-        public async Task<Result<string>> GetAccessTokenAsync(UserStorageProfile profile, CancellationToken cancellationToken = default)
+        public async Task<string> GetAccessTokenAsync(UserStorageProfile profile, CancellationToken cancellationToken = default)
         {
-            try
-            {
-                var credentials = JsonSerializer.Deserialize<GoogleDriveCredentials>(profile.CredentialsJson);
-                if (credentials == null || string.IsNullOrEmpty(credentials.AccessToken))
-                {
-                    return Result<string>.Failure(ErrorCode.InvalidCredentials, "Invalid credentials JSON");
-                }
+            var credentials = JsonSerializer.Deserialize<GoogleDriveCredentials>(profile.CredentialsJson);
+            if (credentials == null || string.IsNullOrEmpty(credentials.AccessToken))
+                throw new ExternalServiceException("InvalidCredentials", "Invalid credentials JSON");
 
-                // Always refresh token at job start to prevent mid-job expiration
-                if (string.IsNullOrEmpty(credentials.RefreshToken))
-                {
-                    return Result<string>.Failure(ErrorCode.NoRefreshToken, "No refresh token available");
-                }
+            if (string.IsNullOrEmpty(credentials.RefreshToken))
+                throw new ExternalServiceException("NoRefreshToken", "No refresh token available");
 
-                // Load app credentials from linked UserOAuthCredential
-                if (!profile.OAuthCredentialId.HasValue)
-                {
-                    return Result<string>.Failure(ErrorCode.MissingCredentials, "Profile has no linked OAuth credentials. Please reconnect your Google Drive.");
-                }
+            if (!profile.OAuthCredentialId.HasValue)
+                throw new ExternalServiceException("MissingCredentials", "Profile has no linked OAuth credentials. Please reconnect your Google Drive.");
 
-                var oauthCred = await unitOfWork.Repository<UserOAuthCredential>().GetByIdAsync(profile.OAuthCredentialId.Value);
-                if (oauthCred == null)
-                {
-                    return Result<string>.Failure(ErrorCode.CredentialNotFound, "Linked OAuth credential not found");
-                }
+            var oauthCred = await unitOfWork.Repository<UserOAuthCredential>().GetByIdAsync(profile.OAuthCredentialId.Value);
+            if (oauthCred == null)
+                throw new NotFoundException("CredentialNotFound", "Linked OAuth credential not found");
 
-                var refreshResult = await RefreshAccessTokenAsync(
-                    oauthCred.ClientId, oauthCred.ClientSecret, credentials.RefreshToken,
-                    profile, cancellationToken);
-                if (refreshResult.IsFailure)
-                {
-                    return Result<string>.Failure(refreshResult.Error);
-                }
+            var (accessToken, expiresIn) = await RefreshAccessTokenAsync(
+                oauthCred.ClientId, oauthCred.ClientSecret, credentials.RefreshToken,
+                profile, cancellationToken);
 
-                // Update credentials with new token and expiration
-                credentials.AccessToken = refreshResult.Value.AccessToken;
-                credentials.ExpiresAt = DateTime.UtcNow.AddSeconds(refreshResult.Value.ExpiresIn).ToString("O");
+            credentials.AccessToken = accessToken;
+            credentials.ExpiresAt = DateTime.UtcNow.AddSeconds(expiresIn).ToString("O");
+            profile.CredentialsJson = JsonSerializer.Serialize(credentials);
+            await unitOfWork.Complete();
 
-                // Save back to profile
-                profile.CredentialsJson = JsonSerializer.Serialize(credentials);
-
-                // Persist changes to database
-                await unitOfWork.Complete();
-
-                logger.LogInformation("Token refreshed and persisted for profile {ProfileId}", profile.Id);
-                return Result.Success(refreshResult.Value.AccessToken);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error getting access token from credentials");
-                return Result<string>.Failure(ErrorCode.TokenError, "Failed to get access token");
-            }
+            logger.LogInformation("Token refreshed and persisted for profile {ProfileId}", profile.Id);
+            return accessToken;
         }
 
-        public async Task<Result<(string AccessToken, int ExpiresIn)>> RefreshAccessTokenAsync(
+        public async Task<(string AccessToken, int ExpiresIn)> RefreshAccessTokenAsync(
             string clientId, string clientSecret, string refreshToken,
             UserStorageProfile? profile = null, CancellationToken cancellationToken = default)
         {
-            try
+            if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
             {
-                if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
-                {
-                    logger.LogError("Google Drive app credentials are missing. User must save credentials via /api/storage/gdrive/credentials endpoint.");
-                    return Result<(string, int)>.Failure(ErrorCode.MissingCredentials, "Google Drive credentials not found. Please reconfigure your Google Drive connection.");
-                }
-
-                var httpClient = httpClientFactory.CreateClient();
-                var requestBody = new Dictionary<string, string>
-                {
-                    { "client_id", clientId },
-                    { "client_secret", clientSecret },
-                    { "refresh_token", refreshToken },
-                    { "grant_type", "refresh_token" }
-                };
-
-                var content = new FormUrlEncodedContent(requestBody);
-                var response = await httpClient.PostAsync("https://oauth2.googleapis.com/token", content, cancellationToken);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                    logger.LogError("Token refresh failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
-
-                    // Detect expired/revoked refresh token (invalid_grant)
-                    if (errorContent.Contains("invalid_grant", StringComparison.OrdinalIgnoreCase) && profile != null)
-                    {
-                        logger.LogWarning("Refresh token expired/revoked for profile {ProfileId}. Setting NeedsReauth flag.", profile.Id);
-                        profile.NeedsReauth = true;
-                        await unitOfWork.Complete();
-                        return Result<(string, int)>.Failure(ErrorCode.RefreshTokenExpired, "Refresh token has expired or been revoked. Please re-authenticate your Google Drive connection.");
-                    }
-
-                    return Result<(string, int)>.Failure(ErrorCode.RefreshFailed, "Failed to refresh access token");
-                }
-
-                var jsonResponse = await response.Content.ReadAsStringAsync(cancellationToken);
-                var tokenResponse = JsonSerializer.Deserialize<GoogleDriveTokenRefreshResponse>(jsonResponse);
-
-                if (tokenResponse == null || string.IsNullOrEmpty(tokenResponse.AccessToken))
-                {
-                    return Result<(string, int)>.Failure(ErrorCode.InvalidResponse, "Invalid token refresh response");
-                }
-
-                return Result.Success((tokenResponse.AccessToken, tokenResponse.ExpiresIn));
+                logger.LogError("Google Drive app credentials are missing.");
+                throw new ExternalServiceException("MissingCredentials", "Google Drive credentials not found. Please reconfigure your Google Drive connection.");
             }
-            catch (Exception ex)
+
+            var httpClient = httpClientFactory.CreateClient();
+            var requestBody = new Dictionary<string, string>
             {
-                logger.LogError(ex, "Exception during token refresh");
-                return Result<(string, int)>.Failure(ErrorCode.RefreshError, "Error refreshing access token");
+                { "client_id", clientId },
+                { "client_secret", clientSecret },
+                { "refresh_token", refreshToken },
+                { "grant_type", "refresh_token" }
+            };
+
+            var content = new FormUrlEncodedContent(requestBody);
+            var response = await httpClient.PostAsync("https://oauth2.googleapis.com/token", content, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                logger.LogError("Token refresh failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
+
+                if (errorContent.Contains("invalid_grant", StringComparison.OrdinalIgnoreCase) && profile != null)
+                {
+                    logger.LogWarning("Refresh token expired/revoked for profile {ProfileId}. Setting NeedsReauth flag.", profile.Id);
+                    profile.NeedsReauth = true;
+                    await unitOfWork.Complete();
+                    throw new ExternalServiceException("RefreshTokenExpired", "Refresh token has expired or been revoked. Please re-authenticate your Google Drive connection.");
+                }
+
+                throw new ExternalServiceException("RefreshFailed", "Failed to refresh access token");
             }
+
+            var jsonResponse = await response.Content.ReadAsStringAsync(cancellationToken);
+            var tokenResponse = JsonSerializer.Deserialize<GoogleDriveTokenRefreshResponse>(jsonResponse);
+
+            if (tokenResponse == null || string.IsNullOrEmpty(tokenResponse.AccessToken))
+                throw new ExternalServiceException("InvalidResponse", "Invalid token refresh response");
+
+            return (tokenResponse.AccessToken, tokenResponse.ExpiresIn);
         }
 
-        public async Task<Result<string>> CreateFolderAsync(string folderName, string? parentFolderId, string accessToken, CancellationToken cancellationToken = default)
+        public async Task<string> CreateFolderAsync(string folderName, string? parentFolderId, string accessToken, CancellationToken cancellationToken = default)
         {
-            try
+            var httpClient = httpClientFactory.CreateClient();
+            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var folderMetadata = new
             {
-                var httpClient = httpClientFactory.CreateClient();
-                httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                name = folderName,
+                mimeType = "application/vnd.google-apps.folder",
+                parents = !string.IsNullOrEmpty(parentFolderId) ? [parentFolderId] : Array.Empty<string>()
+            };
 
-                var folderMetadata = new
-                {
-                    name = folderName,
-                    mimeType = "application/vnd.google-apps.folder",
-                    parents = !string.IsNullOrEmpty(parentFolderId) ? [parentFolderId] : Array.Empty<string>()
-                };
+            var json = JsonSerializer.Serialize(folderMetadata);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                var json = JsonSerializer.Serialize(folderMetadata);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await httpClient.PostAsync(
+                "https://www.googleapis.com/drive/v3/files?fields=id,name",
+                content,
+                cancellationToken);
 
-                var response = await httpClient.PostAsync(
-                    "https://www.googleapis.com/drive/v3/files?fields=id,name",
-                    content,
-                    cancellationToken);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                    logger.LogError("Folder creation failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
-                    return Result<string>.Failure(ErrorCode.FolderCreateFailed, $"Failed to create folder: {errorContent}");
-                }
-
-                var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
-                var folderResponse = JsonSerializer.Deserialize<FolderResponse>(responseJson);
-
-                if (folderResponse == null || string.IsNullOrEmpty(folderResponse.Id))
-                {
-                    return Result<string>.Failure(ErrorCode.InvalidResponse, "Invalid folder creation response");
-                }
-
-                return Result.Success(folderResponse.Id);
-            }
-            catch (Exception ex)
+            if (!response.IsSuccessStatusCode)
             {
-                logger.LogError(ex, "Exception creating folder: {FolderName}", folderName);
-                return Result<string>.Failure(ErrorCode.FolderCreateError, "Error creating folder");
+                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                logger.LogError("Folder creation failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                throw new ExternalServiceException("FolderCreateFailed", $"Failed to create folder: {errorContent}");
             }
+
+            var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
+            var folderResponse = JsonSerializer.Deserialize<FolderResponse>(responseJson);
+
+            if (folderResponse == null || string.IsNullOrEmpty(folderResponse.Id))
+                throw new ExternalServiceException("InvalidResponse", "Invalid folder creation response");
+
+            return folderResponse.Id;
         }
 
-        public async Task<Result<string>> FindOrCreateFolderAsync(
-            string folderName, 
-            string? parentFolderId, 
-            string accessToken, 
+        public async Task<string> FindOrCreateFolderAsync(
+            string folderName,
+            string? parentFolderId,
+            string accessToken,
             CancellationToken cancellationToken = default)
         {
             try
             {
-                // 1. Check if folder already exists in parent
                 var httpClient = httpClientFactory.CreateClient();
                 httpClient.Timeout = TimeSpan.FromMinutes(1);
                 httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
-                // Build query: name='folderName' and mimeType='folder' and 'parentId' in parents and trashed=false
                 var escapedFolderName = folderName.Replace("'", "\\'");
                 var query = $"name='{escapedFolderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false";
-                
+
                 if (!string.IsNullOrEmpty(parentFolderId))
-                {
                     query += $" and '{parentFolderId}' in parents";
-                }
 
                 var url = $"https://www.googleapis.com/drive/v3/files?q={Uri.EscapeDataString(query)}&fields=files(id,name)&pageSize=1";
-
                 var response = await httpClient.GetAsync(url, cancellationToken);
 
                 if (response.IsSuccessStatusCode)
@@ -218,34 +161,34 @@ namespace TorreClou.Infrastructure.Services.Drive
 
                     if (fileListResponse?.Files != null && fileListResponse.Files.Length > 0)
                     {
-                        var existingFolderId = fileListResponse.Files[0].Id;
+                        var existingFolderId = fileListResponse.Files[0].Id!;
                         logger.LogDebug("Folder already exists | FolderName: {FolderName} | ParentId: {ParentId} | FolderId: {FolderId}",
                             folderName, parentFolderId ?? "root", existingFolderId);
-                        return Result.Success(existingFolderId!);
+                        return existingFolderId;
                     }
                 }
                 else
                 {
                     var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
                     logger.LogWarning("Failed to check folder existence: {StatusCode} - {Error}", response.StatusCode, errorContent);
-                    // Continue to create folder even if check fails
                 }
 
-                // 2. Folder doesn't exist, create it
                 logger.LogDebug("Folder does not exist, creating | FolderName: {FolderName} | ParentId: {ParentId}",
                     folderName, parentFolderId ?? "root");
-                
                 return await CreateFolderAsync(folderName, parentFolderId, accessToken, cancellationToken);
+            }
+            catch (ExternalServiceException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Exception in FindOrCreateFolderAsync: {FolderName}", folderName);
-                // Fallback to creating the folder
                 return await CreateFolderAsync(folderName, parentFolderId, accessToken, cancellationToken);
             }
         }
 
-        public async Task<Result<string>> UploadFileAsync(
+        public async Task<string> UploadFileAsync(
             string filePath,
             string fileName,
             string folderId,
@@ -253,81 +196,52 @@ namespace TorreClou.Infrastructure.Services.Drive
             string relativePath,
             CancellationToken cancellationToken = default)
         {
-            try
+            if (!File.Exists(filePath))
+                throw new NotFoundException("FileNotFound", $"File not found: {filePath}");
+
+            var fileInfo = new FileInfo(filePath);
+            var fileSize = fileInfo.Length;
+            var contentType = GetMimeType(fileName);
+
+            string? resumeUri = null;
+            long startByte = 0;
+
+            if (progressContext.IsConfigured)
+                resumeUri = await progressContext.GetResumeUriAsync(relativePath);
+
+            if (!string.IsNullOrEmpty(resumeUri))
             {
-                if (!File.Exists(filePath))
-                    return Result<string>.Failure(ErrorCode.FileNotFound, $"File not found: {filePath}");
+                try
+                {
+                    startByte = await QueryUploadStatusAsync(resumeUri, fileSize, accessToken, cancellationToken);
+                }
+                catch (ExternalServiceException)
+                {
+                    logger.LogCritical("Resume URI invalid, starting fresh upload | File: {FileName}", fileName);
+                    resumeUri = null;
+                    if (progressContext.IsConfigured)
+                        await progressContext.ClearResumeUriAsync(relativePath);
+                }
+            }
 
-                var fileInfo = new FileInfo(filePath);
-                var fileSize = fileInfo.Length;
-                var contentType = GetMimeType(fileName);
-
-                // Check for existing resume URI
-                string? resumeUri = null;
-                long startByte = 0;
+            if (string.IsNullOrEmpty(resumeUri))
+            {
+                resumeUri = await InitiateResumableUploadAsync(fileName, folderId, fileSize, contentType, accessToken, cancellationToken);
 
                 if (progressContext.IsConfigured)
-                {
-                    resumeUri = await progressContext.GetResumeUriAsync(relativePath);
-                }
-
-                if (!string.IsNullOrEmpty(resumeUri))
-                {
-                    // Query Google for current upload status
-                    var statusResult = await QueryUploadStatusAsync(resumeUri, fileSize, accessToken, cancellationToken);
-                    if (statusResult.IsSuccess)
-                    {
-                        startByte = statusResult.Value;
-                    }
-                    else
-                    {
-                        // Resume URI invalid, start fresh
-                        logger.LogCritical("Resume URI invalid, starting fresh upload | File: {FileName}", fileName);
-                        resumeUri = null;
-                        if (progressContext.IsConfigured)
-                        {
-                            await progressContext.ClearResumeUriAsync(relativePath);
-                        }
-                    }
-                }
-
-                // Initiate new resumable upload if needed
-                if (string.IsNullOrEmpty(resumeUri))
-                {
-                    var initResult = await InitiateResumableUploadAsync(fileName, folderId, fileSize, contentType, accessToken, cancellationToken);
-                    if (initResult.IsFailure)
-                    {
-                        return Result<string>.Failure(initResult.Error);
-                    }
-                    resumeUri = initResult.Value;
-
-                    // Cache the resume URI
-                    if (progressContext.IsConfigured)
-                    {
-                        await progressContext.SetResumeUriAsync(relativePath, resumeUri);
-                    }
-                }
-
-                // Upload file in chunks with progress reporting
-                var uploadResult = await UploadFileChunkedAsync(
-                    filePath, fileName, fileSize, resumeUri, startByte, contentType, accessToken, cancellationToken);
-
-                if (uploadResult.IsSuccess && progressContext.IsConfigured)
-                {
-                    // Clear resume URI on success
-                    await progressContext.ClearResumeUriAsync(relativePath);
-                }
-
-                return uploadResult;
+                    await progressContext.SetResumeUriAsync(relativePath, resumeUri);
             }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Exception uploading file: {FileName}", fileName);
-                return Result<string>.Failure(ErrorCode.UploadError, ex.Message);
-            }
+
+            var fileId = await UploadFileChunkedAsync(
+                filePath, fileName, fileSize, resumeUri, startByte, contentType, accessToken, cancellationToken);
+
+            if (progressContext.IsConfigured)
+                await progressContext.ClearResumeUriAsync(relativePath);
+
+            return fileId;
         }
 
-        private async Task<Result<string>> InitiateResumableUploadAsync(
+        private async Task<string> InitiateResumableUploadAsync(
             string fileName,
             string folderId,
             long fileSize,
@@ -354,72 +268,54 @@ namespace TorreClou.Infrastructure.Services.Drive
             {
                 var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
                 logger.LogError("Failed to initiate resumable upload: {StatusCode} - {Error}", response.StatusCode, errorContent);
-                return Result<string>.Failure(ErrorCode.InitFailed, $"Failed to initiate upload: {errorContent}");
+                throw new ExternalServiceException("InitFailed", $"Failed to initiate upload: {errorContent}");
             }
 
             var uploadUri = response.Headers.Location?.ToString();
             if (string.IsNullOrEmpty(uploadUri))
-            {
-                return Result<string>.Failure(ErrorCode.InitFailed, "No upload URI returned");
-            }
+                throw new ExternalServiceException("InitFailed", "No upload URI returned");
 
-            return Result.Success(uploadUri);
+            return uploadUri;
         }
 
-        public async Task<Result<long>> QueryUploadStatusAsync(
+        public async Task<long> QueryUploadStatusAsync(
             string resumeUri,
             long fileSize,
             string accessToken,
             CancellationToken cancellationToken)
         {
-            try
+            var httpClient = httpClientFactory.CreateClient();
+            httpClient.Timeout = TimeSpan.FromMinutes(1);
+
+            var request = new HttpRequestMessage(HttpMethod.Put, resumeUri);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            request.Content = new ByteArrayContent([]);
+            request.Content.Headers.ContentRange = new ContentRangeHeaderValue(fileSize) { Unit = "bytes" };
+
+            var response = await httpClient.SendAsync(request, cancellationToken);
+
+            if (response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.Created)
+                return fileSize;
+
+            if ((int)response.StatusCode == 308)
             {
-                var httpClient = httpClientFactory.CreateClient();
-                httpClient.Timeout = TimeSpan.FromMinutes(1);
-
-                var request = new HttpRequestMessage(HttpMethod.Put, resumeUri);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                request.Content = new ByteArrayContent([]);
-                request.Content.Headers.ContentRange = new ContentRangeHeaderValue(fileSize) { Unit = "bytes" };
-                // Format: "bytes */total"
-
-                var response = await httpClient.SendAsync(request, cancellationToken);
-
-                if (response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.Created)
+                if (response.Headers.TryGetValues("Range", out var rangeValues))
                 {
-                    // Upload already complete
-                    return Result.Success(fileSize);
-                }
-
-                if ((int)response.StatusCode == 308) // Resume Incomplete
-                {
-                    if (response.Headers.TryGetValues("Range", out var rangeValues))
+                    var rangeHeader = rangeValues.FirstOrDefault();
+                    if (!string.IsNullOrEmpty(rangeHeader))
                     {
-                        var rangeHeader = rangeValues.FirstOrDefault();
-                        if (!string.IsNullOrEmpty(rangeHeader))
-                        {
-                            // Format: "bytes=0-12345"
-                            var parts = rangeHeader.Replace("bytes=", "").Split('-');
-                            if (parts.Length == 2 && long.TryParse(parts[1], out var uploadedBytes))
-                            {
-                                return Result.Success(uploadedBytes + 1); // Resume from next byte
-                            }
-                        }
+                        var parts = rangeHeader.Replace("bytes=", "").Split('-');
+                        if (parts.Length == 2 && long.TryParse(parts[1], out var uploadedBytes))
+                            return uploadedBytes + 1;
                     }
-                    // No Range header means no bytes uploaded yet
-                    return Result.Success(0L);
                 }
+                return 0L;
+            }
 
-                return Result<long>.Failure(ErrorCode.StatusQueryFailed, $"Unexpected status: {response.StatusCode}");
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Failed to query upload status");
-                return Result<long>.Failure(ErrorCode.StatusQueryError, ex.Message);
-            }
+            throw new ExternalServiceException("StatusQueryFailed", $"Unexpected status: {response.StatusCode}");
         }
 
-        private async Task<Result<string>> UploadFileChunkedAsync(
+        private async Task<string> UploadFileChunkedAsync(
             string filePath,
             string fileName,
             long fileSize,
@@ -433,12 +329,9 @@ namespace TorreClou.Infrastructure.Services.Drive
             httpClient.Timeout = TimeSpan.FromHours(2);
 
             await using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            
-            // Seek to start position if resuming
+
             if (startByte > 0)
-            {
                 fileStream.Seek(startByte, SeekOrigin.Begin);
-            }
 
             var buffer = new byte[ChunkSize];
             var currentPosition = startByte;
@@ -459,154 +352,118 @@ namespace TorreClou.Infrastructure.Services.Drive
                 chunkContent.Headers.ContentRange = new ContentRangeHeaderValue(
                     currentPosition, currentPosition + bytesRead - 1, fileSize);
 
-                var request = new HttpRequestMessage(HttpMethod.Put, resumeUri)
-                {
-                    Content = chunkContent
-                };
+                var request = new HttpRequestMessage(HttpMethod.Put, resumeUri) { Content = chunkContent };
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
                 var response = await httpClient.SendAsync(request, cancellationToken);
 
                 if (response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.Created)
                 {
-                    // Upload complete
                     var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
                     var driveFile = JsonSerializer.Deserialize<FileUploadResponse>(responseJson);
 
-                    // Report final progress
                     if (progressContext.IsConfigured)
-                    {
                         await progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
-                    }
 
-                    return Result.Success(driveFile?.Id ?? "");
+                    return driveFile?.Id ?? "";
                 }
 
-                if ((int)response.StatusCode == 308) // Resume Incomplete - chunk accepted
+                if ((int)response.StatusCode == 308)
                 {
                     currentPosition += bytesRead;
 
-                    // Report progress
                     if (progressContext.IsConfigured)
-                    {
                         await progressContext.ReportProgressAsync(fileName, currentPosition, fileSize);
-                    }
 
-                    // If all bytes have been sent but we still got 308, finalize the upload
                     if (currentPosition >= fileSize)
                     {
-                        // Make a final PUT request with Content-Range query format to finalize and get file ID
                         var finalRequest = new HttpRequestMessage(HttpMethod.Put, resumeUri);
                         finalRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
                         finalRequest.Content = new ByteArrayContent(Array.Empty<byte>());
-                        // Use query format: "bytes */fileSize" to finalize upload
                         finalRequest.Content.Headers.ContentRange = new ContentRangeHeaderValue(fileSize) { Unit = "bytes" };
 
                         var finalResponse = await httpClient.SendAsync(finalRequest, cancellationToken);
-                        
+
                         if (finalResponse.StatusCode == HttpStatusCode.OK || finalResponse.StatusCode == HttpStatusCode.Created)
                         {
                             var responseJson = await finalResponse.Content.ReadAsStringAsync(cancellationToken);
                             var driveFile = JsonSerializer.Deserialize<FileUploadResponse>(responseJson);
 
-                            // Report final progress
                             if (progressContext.IsConfigured)
-                            {
                                 await progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
-                            }
 
-                            return Result.Success(driveFile?.Id ?? "");
+                            return driveFile?.Id ?? "";
                         }
-                        else
-                        {
-                            logger.LogWarning("Finalization request failed: {StatusCode} | File: {FileName}", finalResponse.StatusCode, fileName);
-                            // Fall through to post-loop check
-                        }
+
+                        logger.LogWarning("Finalization request failed: {StatusCode} | File: {FileName}", finalResponse.StatusCode, fileName);
                     }
                 }
                 else
                 {
                     var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
                     logger.LogError("Chunk upload failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
-                    return Result<string>.Failure(ErrorCode.ChunkFailed, $"Chunk upload failed: {response.StatusCode}");
+                    throw new ExternalServiceException("ChunkFailed", $"Chunk upload failed: {response.StatusCode}");
                 }
             }
 
-            // If we exit the loop and all bytes were sent, finalize the upload as fallback
             if (currentPosition >= fileSize)
             {
-                // Make a final PUT request with Content-Range query format to finalize and get file ID
                 var finalRequest = new HttpRequestMessage(HttpMethod.Put, resumeUri);
                 finalRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
                 finalRequest.Content = new ByteArrayContent(Array.Empty<byte>());
-                // Use query format: "bytes */fileSize" to finalize upload
                 finalRequest.Content.Headers.ContentRange = new ContentRangeHeaderValue(fileSize) { Unit = "bytes" };
 
                 var finalResponse = await httpClient.SendAsync(finalRequest, cancellationToken);
-                
+
                 if (finalResponse.StatusCode == HttpStatusCode.OK || finalResponse.StatusCode == HttpStatusCode.Created)
                 {
                     var responseJson = await finalResponse.Content.ReadAsStringAsync(cancellationToken);
                     var driveFile = JsonSerializer.Deserialize<FileUploadResponse>(responseJson);
 
-                    // Report final progress
                     if (progressContext.IsConfigured)
-                    {
                         await progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
-                    }
 
-                    return Result.Success(driveFile?.Id ?? "");
+                    return driveFile?.Id ?? "";
                 }
-                else
-                {
-                    logger.LogWarning("Finalization request failed after loop exit: {StatusCode} | File: {FileName}", finalResponse.StatusCode, fileName);
-                }
+
+                logger.LogWarning("Finalization request failed after loop exit: {StatusCode} | File: {FileName}", finalResponse.StatusCode, fileName);
             }
 
-            return Result<string>.Failure(ErrorCode.UploadIncomplete, "Upload did not complete successfully");
+            throw new ExternalServiceException("UploadIncomplete", "Upload did not complete successfully");
         }
 
-        public async Task<Result<string?>> CheckFileExistsAsync(string folderId, string fileName, string accessToken, CancellationToken cancellationToken = default)
+        public async Task<string?> CheckFileExistsAsync(string folderId, string fileName, string accessToken, CancellationToken cancellationToken = default)
         {
-            try
+            var httpClient = httpClientFactory.CreateClient();
+            httpClient.Timeout = TimeSpan.FromMinutes(1);
+            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var escapedFileName = fileName.Replace("'", "\\'");
+            var query = $"name='{escapedFileName}' and '{folderId}' in parents and trashed=false";
+            var url = $"https://www.googleapis.com/drive/v3/files?q={Uri.EscapeDataString(query)}&fields=files(id,name)&pageSize=1";
+
+            var response = await httpClient.GetAsync(url, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
             {
-                var httpClient = httpClientFactory.CreateClient();
-                httpClient.Timeout = TimeSpan.FromMinutes(1);
-                httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-
-                // Escape single quotes in fileName for the query
-                var escapedFileName = fileName.Replace("'", "\\'");
-                var query = $"name='{escapedFileName}' and '{folderId}' in parents and trashed=false";
-                var url = $"https://www.googleapis.com/drive/v3/files?q={Uri.EscapeDataString(query)}&fields=files(id,name)&pageSize=1";
-
-                var response = await httpClient.GetAsync(url, cancellationToken);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                    logger.LogWarning("Failed to check file existence: {StatusCode} - {Error}", response.StatusCode, errorContent);
-                    return Result<string?>.Failure(ErrorCode.CheckFailed, $"Failed to check file existence: {errorContent}");
-                }
-
-                var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
-                var fileListResponse = JsonSerializer.Deserialize<FileListResponse>(responseJson);
-
-                if (fileListResponse?.Files != null && fileListResponse.Files.Length > 0)
-                {
-                    var fileId = fileListResponse.Files[0].Id;
-                    logger.LogDebug("File exists in Google Drive | FileName: {FileName} | FolderId: {FolderId} | FileId: {FileId}",
-                        fileName, folderId, fileId);
-                    return Result.Success<string?>(fileId);
-                }
-
-                logger.LogDebug("File does not exist in Google Drive | FileName: {FileName} | FolderId: {FolderId}", fileName, folderId);
-                return Result.Success<string?>(null);
+                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                logger.LogWarning("Failed to check file existence: {StatusCode} - {Error}", response.StatusCode, errorContent);
+                throw new ExternalServiceException("CheckFailed", $"Failed to check file existence: {errorContent}");
             }
-            catch (Exception ex)
+
+            var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
+            var fileListResponse = JsonSerializer.Deserialize<FileListResponse>(responseJson);
+
+            if (fileListResponse?.Files != null && fileListResponse.Files.Length > 0)
             {
-                logger.LogError(ex, "Exception checking file existence: {FileName}", fileName);
-                return Result<string?>.Failure(ErrorCode.CheckError, $"Error checking file existence: {ex.Message}");
+                var fileId = fileListResponse.Files[0].Id;
+                logger.LogDebug("File exists in Google Drive | FileName: {FileName} | FolderId: {FolderId} | FileId: {FileId}",
+                    fileName, folderId, fileId);
+                return fileId;
             }
+
+            logger.LogDebug("File does not exist in Google Drive | FileName: {FileName} | FolderId: {FolderId}", fileName, folderId);
+            return null;
         }
 
         public async Task<bool> DeleteUploadLockAsync(int jobId)
@@ -618,7 +475,6 @@ namespace TorreClou.Infrastructure.Services.Drive
             }
             catch (Exception ex)
             {
-                // Log but don't fail - lock might not exist or already expired
                 logger.LogWarning(ex, "Failed to delete upload lock for job {JobId}", jobId);
                 return false;
             }
@@ -644,8 +500,7 @@ namespace TorreClou.Infrastructure.Services.Drive
                 ".pdf" => "application/pdf",
                 ".doc" => "application/msword",
                 ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                ".jpg" => "image/jpeg",
-                ".jpeg" => "image/jpeg",
+                ".jpg" or ".jpeg" => "image/jpeg",
                 ".png" => "image/png",
                 ".gif" => "image/gif",
                 ".bmp" => "image/bmp",
