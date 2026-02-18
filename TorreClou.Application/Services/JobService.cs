@@ -245,7 +245,7 @@ namespace TorreClou.Application.Services
             job.ErrorMessage = null;
             job.NextRetryAt = null;
             job.LastHeartbeat = DateTime.UtcNow;
-            job.CurrentState = $"Manually retried by {userRole}";
+            job.CurrentState = $"Manually retried by {userRole?.ToString() ?? "User"}";
 
             await jobStatusService.TransitionJobStatusAsync(
                 job,
@@ -327,6 +327,12 @@ namespace TorreClou.Application.Services
             {
                 logger.LogWarning("Job not found for {Operation} | UserId: {UserId}", operation, userId);
                 throw new NotFoundException("JobNotFound", "Job not found.");
+            }
+
+            if (job.UserId != userId)
+            {
+                logger.LogWarning("Unauthorized {Operation} attempt | JobId: {JobId} | JobOwner: {OwnerId} | RequestingUser: {UserId}", operation, job.Id, job.UserId, userId);
+                throw new ForbiddenException("Forbidden", "You are not authorized to perform this operation on this job.");
             }
         }
 

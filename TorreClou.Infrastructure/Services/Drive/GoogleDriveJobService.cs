@@ -27,6 +27,15 @@ namespace TorreClou.Infrastructure.Services.Drive
             if (credentials == null || string.IsNullOrEmpty(credentials.AccessToken))
                 throw new ExternalServiceException("InvalidCredentials", "Invalid credentials JSON");
 
+            // Check if existing token is still valid (with 60-second safety margin)
+            if (!string.IsNullOrEmpty(credentials.ExpiresAt)
+                && DateTime.TryParse(credentials.ExpiresAt, null, System.Globalization.DateTimeStyles.RoundtripKind, out var expiresAtUtc)
+                && expiresAtUtc > DateTime.UtcNow.AddSeconds(60))
+            {
+                logger.LogDebug("Token still valid for profile {ProfileId}, skipping refresh", profile.Id);
+                return credentials.AccessToken;
+            }
+
             if (string.IsNullOrEmpty(credentials.RefreshToken))
                 throw new ExternalServiceException("NoRefreshToken", "No refresh token available");
 

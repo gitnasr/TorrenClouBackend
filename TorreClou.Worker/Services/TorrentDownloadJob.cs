@@ -148,6 +148,15 @@ namespace TorreClou.Worker.Services
                 Logger.LogInformation("{LogPrefix} Manager state settled | JobId: {JobId} | State: {State} | Progress: {Progress}%",
                     LogPrefix, job.Id, manager.State, manager.Progress);
 
+                // Handle Stopped state — treat as failure to prevent infinite polling
+                if (manager.State == TorrentState.Stopped)
+                {
+                    Logger.LogWarning("{LogPrefix} Torrent stopped unexpectedly before download | JobId: {JobId} | Progress: {Progress}%",
+                        LogPrefix, job.Id, manager.Progress);
+                    await MarkJobFailedAsync(job, "Torrent stopped unexpectedly");
+                    return;
+                }
+
                 // Check if torrent is already complete (fast resume confirmed all pieces)
                 if (manager.Progress >= 100.0 && manager.State == TorrentState.Seeding)
                 {
@@ -329,14 +338,15 @@ namespace TorreClou.Worker.Services
                     return true;
                 }
 
-                // Check for error
-                if (manager.State == TorrentState.Error)
+                // Check for error or unexpected stop
+                if (manager.State == TorrentState.Error || manager.State == TorrentState.Stopped)
                 {
-                    var errorReason = manager.Error?.Reason.ToString() ?? "Unknown error";
-                    Logger.LogError("{LogPrefix} Torrent error | JobId: {JobId} | Error: {Error}",
-                        LogPrefix, job.Id, errorReason);
-                    // Mark as TORRENT_FAILED - BaseJob will handle retry logic and set TORRENT_DOWNLOAD_RETRY if retries available
-                    await MarkJobFailedAsync(job, $"Torrent error: {errorReason}");
+                    var errorReason = manager.State == TorrentState.Error
+                        ? manager.Error?.Reason.ToString() ?? "Unknown error"
+                        : "Torrent stopped unexpectedly during download";
+                    Logger.LogError("{LogPrefix} Torrent {State} | JobId: {JobId} | Error: {Error}",
+                        LogPrefix, manager.State, job.Id, errorReason);
+                    await MarkJobFailedAsync(job, $"Torrent {manager.State}: {errorReason}");
                     return false;
                 }
 

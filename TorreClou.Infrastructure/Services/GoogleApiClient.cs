@@ -66,7 +66,7 @@ namespace TorreClou.Infrastructure.Services
             if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                logger.LogCritical(
+                logger.LogError(
                     "Failed to fetch user info: {StatusCode} - {Error}. Access token length: {TokenLength}",
                     response.StatusCode, errorContent, accessToken.Length);
                 throw new ExternalServiceException("InvalidResponse", "Failed to fetch user info");
@@ -81,8 +81,7 @@ namespace TorreClou.Infrastructure.Services
                 throw new ExternalServiceException("InvalidResponse", "Failed to deserialize user info");
             }
 
-            if (!string.IsNullOrEmpty(userInfo.Email))
-                logger.LogInformation("Successfully fetched user email: {Email}", userInfo.Email);
+            logger.LogInformation("User info fetched successfully. Email present: {EmailPresent}", !string.IsNullOrEmpty(userInfo.Email));
 
             return userInfo;
         }

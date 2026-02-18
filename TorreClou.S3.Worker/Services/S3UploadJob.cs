@@ -495,12 +495,10 @@ namespace TorreClou.S3.Worker.Services
 
             await using var fileStream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read);
 
-            var startPartNumber = existingParts.Count > 0
-                ? existingParts.Max(p => p.PartNumber) + 1
-                : 1;
+            var uploadedPartNumbers = new HashSet<int>(existingParts.Select(p => p.PartNumber));
 
-            Logger.LogInformation("{LogPrefix} Resuming from part {StartPart} | JobId: {JobId} | ExistingParts: {ExistingParts}",
-                LogPrefix, startPartNumber, job.Id, existingParts.Count);
+            Logger.LogInformation("{LogPrefix} Starting upload loop | JobId: {JobId} | TotalParts: {TotalParts} | AlreadyUploaded: {AlreadyUploaded}",
+                LogPrefix, job.Id, progress.TotalParts, uploadedPartNumbers.Count);
 
             var buffer = ArrayPool<byte>.Shared.Rent((int)PartSize);
             var lastPartLogTime = DateTime.UtcNow;
@@ -508,9 +506,16 @@ namespace TorreClou.S3.Worker.Services
 
             try
             {
-                for (int partNumber = startPartNumber; partNumber <= progress.TotalParts; partNumber++)
+                for (int partNumber = 1; partNumber <= progress.TotalParts; partNumber++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+
+                    if (uploadedPartNumbers.Contains(partNumber))
+                    {
+                        Logger.LogDebug("{LogPrefix} Skipping already-uploaded part {PartNumber} | JobId: {JobId}",
+                            LogPrefix, partNumber, job.Id);
+                        continue;
+                    }
 
                     var partStart = (partNumber - 1) * PartSize;
                     var currentPartSize = (int)Math.Min(PartSize, file.Length - partStart);
@@ -563,6 +568,7 @@ namespace TorreClou.S3.Worker.Services
                 ArrayPool<byte>.Shared.Return(buffer);
             }
 
+            existingParts.Sort((a, b) => a.PartNumber.CompareTo(b.PartNumber));
             return existingParts;
         }
 
