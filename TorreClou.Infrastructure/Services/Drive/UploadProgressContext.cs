@@ -3,7 +3,7 @@ using TorreClou.Core.Interfaces;
 
 namespace TorreClou.Infrastructure.Services.Drive
 {
-  
+
 
     public class UploadProgressContext(IRedisCacheService redisCache) : IUploadProgressContext
     {
@@ -52,7 +52,6 @@ namespace TorreClou.Infrastructure.Services.Drive
             await CheckAndReportAsync(currentTotal, fileName, isFileComplete: false);
         }
 
-        // FIXED: Changed to Async to support DB updates
         public async Task MarkFileCompletedAsync(string fileName, long fileSize)
         {
             if (!_isConfigured) return;
@@ -63,7 +62,6 @@ namespace TorreClou.Infrastructure.Services.Drive
             await CheckAndReportAsync(_completedBytes, fileName, isFileComplete: true);
         }
 
-        // FIXED: Renamed to Async
         public async Task MarkBytesCompletedAsync(string fileName, long bytesUploaded)
         {
             if (!_isConfigured) return;
@@ -152,10 +150,6 @@ namespace TorreClou.Infrastructure.Services.Drive
             return await redisCache.GetAsync(GetRootFolderKey(jobId));
         }
 
-        public async Task ClearJobStateAsync(int jobId)
-        {
-            await redisCache.DeleteAsync(GetRootFolderKey(jobId));
-        }
 
         // --- Helpers ---
 

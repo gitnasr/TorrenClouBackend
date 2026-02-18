@@ -11,18 +11,7 @@ namespace TorreClou.Application.Services.Storage
 {
     public class StorageProfilesService(IUnitOfWork unitOfWork, IJobService jobService) : IStorageProfilesService
     {
-        public async Task<Result<UserStorageProfile>> ValidateActiveStorageProfileByUserId(int userId, int profileId)
-        {
-            var spec = new BaseSpecification<UserStorageProfile>(
-                p => p.Id == profileId && p.UserId == userId && p.IsActive
-            );
-            var profile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(spec);
-            if (profile == null)
-            {
-                return Result<UserStorageProfile>.Failure(ErrorCode.ProfileNotFound, "Storage profile not found");
-            }
-            return Result.Success(profile);
-        }
+
         public async Task<Result<List<StorageProfileDto>>> GetStorageProfilesAsync(int userId)
         {
             var spec = new BaseSpecification<UserStorageProfile>(
@@ -140,9 +129,9 @@ namespace TorreClou.Application.Services.Storage
             }
 
 
-                // Set profile as inactive
-                profile.IsActive = false;
-            
+            // Set profile as inactive
+            profile.IsActive = false;
+
             // If this was the default profile, unset it
             if (profile.IsDefault)
             {
@@ -178,9 +167,23 @@ namespace TorreClou.Application.Services.Storage
             return Result.Success(true);
         }
 
-        /// <summary>
-        /// Checks if a storage profile has completed OAuth (has a refresh token).
-        /// </summary>
+
+        public async Task<UserStorageProfile?> GetDefaultStorageProfileAsync(int userId)
+        {
+            var spec = new BaseSpecification<UserStorageProfile>(
+                p => p.UserId == userId && p.IsActive && p.IsDefault
+            );
+            return await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(spec);
+        }
+        public async Task<UserStorageProfile> Add(UserStorageProfile userStorageProfile)
+        {
+            unitOfWork.Repository<UserStorageProfile>().Add(userStorageProfile);
+            await unitOfWork.Complete();
+            return userStorageProfile;
+        }
+
+
+
         private static bool IsProfileConfigured(UserStorageProfile profile)
         {
             if (profile.ProviderType != StorageProviderType.GoogleDrive)
@@ -195,6 +198,50 @@ namespace TorreClou.Application.Services.Storage
             {
                 return false;
             }
+        }
+
+        public async Task<UserStorageProfile?> GetProfileBySpecAsync(int userId, int profileId, bool activeOnly = true)
+        {
+            var spec = activeOnly
+                ? new BaseSpecification<UserStorageProfile>(p => p.Id == profileId && p.UserId == userId && p.IsActive)
+                : new BaseSpecification<UserStorageProfile>(p => p.Id == profileId && p.UserId == userId);
+            return await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(spec);
+        }
+
+        public async Task<bool> HasDuplicateEmailAsync(int userId, int excludeProfileId, string email)
+        {
+            var spec = new BaseSpecification<UserStorageProfile>(
+                p => p.UserId == userId
+                    && p.Id != excludeProfileId
+                    && p.ProviderType == StorageProviderType.GoogleDrive
+                    && p.IsActive
+                    && p.Email != null
+                    && p.Email.ToLower() == email.ToLower()
+            );
+            var duplicate = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(spec);
+            return duplicate != null;
+        }
+
+        public Task<UserStorageProfile> AddWithoutSaveAsync(UserStorageProfile profile)
+        {
+            unitOfWork.Repository<UserStorageProfile>().Add(profile);
+            return Task.FromResult(profile);
+        }
+
+        public async Task<bool> HasDefaultProfile(int userId)
+        {
+            var defaultProfileSpec = new BaseSpecification<UserStorageProfile>(
+                          p => p.UserId == userId && p.IsDefault && p.IsActive
+                      );
+            var hasDefault = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(defaultProfileSpec) != null;
+
+            return hasDefault;
+
+        }
+
+        public async Task Save()
+        {
+            await unitOfWork.Complete();
         }
     }
 }

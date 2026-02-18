@@ -2,7 +2,6 @@ using Microsoft.EntityFrameworkCore;
 using TorreClou.Core.Entities;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Entities.Torrents;
-using TorreClou.Core.Entities.Compliance;
 
 namespace TorreClou.Infrastructure.Data
 {
@@ -17,7 +16,7 @@ namespace TorreClou.Infrastructure.Data
         public DbSet<User> Users { get; set; }
         public DbSet<UserStorageProfile> UserStorageProfiles { get; set; }
         public DbSet<UserOAuthCredential> UserOAuthCredentials { get; set; }
-  
+
 
         // --- Job & File Entities ---
         public DbSet<RequestedFile> RequestedFiles { get; set; }
@@ -67,7 +66,7 @@ namespace TorreClou.Infrastructure.Data
             // --- User Configuration ---
             builder.Entity<User>()
                 .HasIndex(u => u.Email).IsUnique();
-      
+
 
             // --- Storage Profile ---
             builder.Entity<UserStorageProfile>()
@@ -89,7 +88,7 @@ namespace TorreClou.Infrastructure.Data
                 .HasForeignKey(c => c.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-      
+
 
             // --- Jobs ---
             builder.Entity<UserJob>()
@@ -124,11 +123,6 @@ namespace TorreClou.Infrastructure.Data
             builder.Entity<S3SyncProgress>()
                 .HasOne(p => p.UserJob).WithMany().HasForeignKey(p => p.JobId).OnDelete(DeleteBehavior.Cascade);
 
-            // --- Strikes ---
-            builder.Entity<UserStrike>()
-                .Property(s => s.ViolationType).HasConversion<string>();
-            builder.Entity<UserStrike>()
-                .HasOne(s => s.User).WithMany(u => u.Strikes).HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
 
 
             // --- Requested Files (Torrents) ---

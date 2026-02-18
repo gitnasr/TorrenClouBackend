@@ -1,5 +1,4 @@
 ﻿using Hangfire;
-using Microsoft.Extensions.Configuration;
 using MonoTorrent;
 using MonoTorrent.Client;
 using TorreClou.Core.Entities.Jobs;
@@ -47,7 +46,7 @@ namespace TorreClou.Worker.Services
         }
 
         // Removed DisableConcurrentExecution to allow concurrent downloads (limited by semaphore)
-        [AutomaticRetry(Attempts = 3, DelaysInSeconds = new[] { 60, 300, 900 }), ]
+        [AutomaticRetry(Attempts = 3, DelaysInSeconds = new[] { 60, 300, 900 }),]
         [Queue("torrents")]
         public new async Task ExecuteAsync(int jobId, CancellationToken cancellationToken = default)
         {
@@ -72,22 +71,22 @@ namespace TorreClou.Worker.Services
                     await MarkJobFailedAsync(job, "Failed to download or parse torrent file");
                     return;
                 }
-                
+
                 // If SelectedFilePaths is null, select all files; otherwise use the specified paths
-                var selectedSet = job.SelectedFilePaths != null 
+                var selectedSet = job.SelectedFilePaths != null
                     ? new HashSet<string>(job.SelectedFilePaths)
                     : null;
-                    
+
                 var downloadableSize = torrent.Files
                     .Where(file => selectedSet == null || IsFileSelected(file.Path, selectedSet))
                     .Sum(file => file.Length);
-                
+
                 job.StartedAt ??= DateTime.UtcNow;
                 job.LastHeartbeat = DateTime.UtcNow;
                 job.DownloadPath = downloadPath;
                 job.CurrentState = "Initializing torrent download...";
                 job.TotalBytes = downloadableSize;
-                
+
                 await JobStatusService.TransitionJobStatusAsync(
                     job,
                     JobStatus.DOWNLOADING,
@@ -113,7 +112,7 @@ namespace TorreClou.Worker.Services
 
                         // Set to DoNotDownload for unselected files
 
-                      await  manager.SetFilePriorityAsync(file, Priority.DoNotDownload);
+                        await manager.SetFilePriorityAsync(file, Priority.DoNotDownload);
                         Logger.LogInformation(
                             "{LogPrefix} Skipped file from download as per user request | JobId: {JobId} | FilePath: {FilePath} | SizeMB: {SizeMB:F2} MB",
                             LogPrefix, job.Id, file.Path, file.Length / (1024.0 * 1024.0));
@@ -124,38 +123,37 @@ namespace TorreClou.Worker.Services
                 Logger.LogInformation(
                     "{LogPrefix} Torrent loaded | JobId: {JobId} | Name: {Name} | Size: {SizeMB:F2} MB | Path: {Path} | MaxConnections: {MaxConn}",
                     LogPrefix, job.Id, torrent.Name, downloadableSize / (1024.0 * 1024.0), downloadPath, manager.Settings.MaximumConnections);
-             
+
                 // Start manager to load FastResume state
-                   await manager.StartAsync();
-                    
-                    
-                    // Check if torrent is already complete
-                    if (manager.Progress >= 100.0 && manager.State == TorrentState.Seeding)
-                    {
-                        Logger.LogInformation("{LogPrefix} Torrent already complete, dispatch to upload worker | JobId: {JobId}", LogPrefix, job.Id);
-                        await OnDownloadCompleteAsync(job, _engine);
-                        return;
-                    }
-                    else
-                    {
-                        // Download not complete, reset to downloading and continue with normal flow
-                        Logger.LogWarning("{LogPrefix} Torrent not complete, resuming to DOWNLOADING | JobId: {JobId} | Progress: {Progress}%", 
-                            LogPrefix, job.Id, manager.Progress);
-                        
-                        await JobStatusService.TransitionJobStatusAsync(
-                            job,
-                            JobStatus.DOWNLOADING,
-                            StatusChangeSource.Worker,
-                            metadata: new { resuming = true, currentProgress = manager.Progress });
-                    }
+                await manager.StartAsync();
+
+
+                // Check if torrent is already complete
+                if (manager.Progress >= 100.0 && manager.State == TorrentState.Seeding)
+                {
+                    Logger.LogInformation("{LogPrefix} Torrent already complete, dispatch to upload worker | JobId: {JobId}", LogPrefix, job.Id);
+                    await OnDownloadCompleteAsync(job, _engine);
+                    return;
+                }
+                else
+                {
+                    // Download not complete, reset to downloading and continue with normal flow
+                    Logger.LogWarning("{LogPrefix} Torrent not complete, resuming to DOWNLOADING | JobId: {JobId} | Progress: {Progress}%",
+                        LogPrefix, job.Id, manager.Progress);
+
+                    await JobStatusService.TransitionJobStatusAsync(
+                        job,
+                        JobStatus.DOWNLOADING,
+                        StatusChangeSource.Worker,
+                        metadata: new { resuming = true, currentProgress = manager.Progress });
+                }
 
                 var actualBytesDownloaded = (long)(downloadableSize * (progress / 100.0));
                 job.BytesDownloaded = actualBytesDownloaded;
-                var remainingBytesApprox = Math.Max(0, job.TotalBytes - actualBytesDownloaded);
 
-               
 
-                Logger.LogInformation("{LogPrefix} Download started | JobId: {JobId} | Initial State: {State} | ResumedBytes: {ResumedBytes} | Progress: {Progress}%", 
+
+                Logger.LogInformation("{LogPrefix} Download started | JobId: {JobId} | Initial State: {State} | ResumedBytes: {ResumedBytes} | Progress: {Progress}%",
                     LogPrefix, job.Id, manager.State, actualBytesDownloaded, manager.Progress);
 
                 // 7. Monitor download progress
@@ -268,10 +266,10 @@ namespace TorreClou.Worker.Services
                 AutoSaveLoadDhtCache = true,
                 AutoSaveLoadFastResume = true,  // Enable FastResume for crash recovery
                 CacheDirectory = downloadPath,   // Store .fresume files alongside downloads
-                
-                 MaximumConnections = 200,        // Global max connections (default is often 50-100)
-                
-        
+
+                MaximumConnections = 200,        // Global max connections (default is often 50-100)
+
+
                 AllowPortForwarding = true
             }.ToSettings();
 
@@ -294,7 +292,7 @@ namespace TorreClou.Worker.Services
             while (!cancellationToken.IsCancellationRequested)
             {
                 var now = DateTime.UtcNow;
-                
+
                 // Update progress metrics
                 var actualBytesDownloaded = (long)(job.TotalBytes * (manager.Progress / 100.0));
 
@@ -302,11 +300,11 @@ namespace TorreClou.Worker.Services
                 if (manager.Progress >= 100.0 || manager.State == TorrentState.Seeding)
                 {
                     Logger.LogInformation("{LogPrefix} Download complete | JobId: {JobId}", LogPrefix, job.Id);
-                    
+
                     // Record final download metrics
                     var duration = (DateTime.UtcNow - downloadStartTime).TotalSeconds;
                     speedMetrics.RecordDownloadComplete(job.Id, job.UserId, "torrent_download", actualBytesDownloaded, duration);
-                    
+
                     await SaveEngineStateAsync(engine, "completion");
                     return true;
                 }
@@ -315,7 +313,7 @@ namespace TorreClou.Worker.Services
                 if (manager.State == TorrentState.Error)
                 {
                     var errorReason = manager.Error?.Reason.ToString() ?? "Unknown error";
-                    Logger.LogError("{LogPrefix} Torrent error | JobId: {JobId} | Error: {Error}", 
+                    Logger.LogError("{LogPrefix} Torrent error | JobId: {JobId} | Error: {Error}",
                         LogPrefix, job.Id, errorReason);
                     // Mark as TORRENT_FAILED - BaseJob will handle retry logic and set TORRENT_DOWNLOAD_RETRY if retries available
                     await MarkJobFailedAsync(job, $"Torrent error: {errorReason}");
@@ -326,7 +324,7 @@ namespace TorreClou.Worker.Services
                 if (actualBytesDownloaded - lastLoggedBytes >= LogThresholdBytes)
                 {
                     var speed = (actualBytesDownloaded - lastLoggedBytes) / (now - lastLogTime).TotalSeconds;
-                   
+
                     Logger.LogInformation(
                         "{LogPrefix} Progress | JobId: {JobId} | {State} | {Progress:F2}% | {DownloadedMB:F2}/{TotalMB:F2} MB | Speed: {SpeedMBps:F2} MB/s",
                         LogPrefix,
@@ -409,21 +407,20 @@ namespace TorreClou.Worker.Services
             await SaveEngineStateAsync(engine, "download-complete");
 
             // Store original download path (block storage path) for cleanup
-            var originalDownloadPath = job.DownloadPath;
 
             try
             {
                 // Step 1: Update job status to PENDING_UPLOAD
                 job.CurrentState = "Download complete. Starting upload...";
                 job.BytesDownloaded = job.TotalBytes;
-                
+
                 await JobStatusService.TransitionJobStatusAsync(
                     job,
                     JobStatus.PENDING_UPLOAD,
                     StatusChangeSource.Worker,
                     metadata: new { bytesDownloaded = job.BytesDownloaded, storageProvider = job.StorageProfile?.ProviderType.ToString() });
 
-                Logger.LogInformation("{LogPrefix} Publishing to upload stream | JobId: {JobId} | Provider: {Provider}", 
+                Logger.LogInformation("{LogPrefix} Publishing to upload stream | JobId: {JobId} | Provider: {Provider}",
                     LogPrefix, job.Id, job.StorageProfile?.ProviderType);
 
                 // Publish to upload stream for Google Drive worker (sync will be triggered after upload completes)
@@ -437,14 +434,14 @@ namespace TorreClou.Worker.Services
                     { "createdAt", DateTime.UtcNow.ToString("O") }
                 });
 
-                Logger.LogInformation("{LogPrefix} Published to upload stream | JobId: {JobId} | Stream: {Stream}", 
+                Logger.LogInformation("{LogPrefix} Published to upload stream | JobId: {JobId} | Stream: {Stream}",
                     LogPrefix, job.Id, uploadStreamKey);
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "{LogPrefix} Failed during download completion | JobId: {JobId} | ExceptionType: {ExceptionType}", 
+                Logger.LogError(ex, "{LogPrefix} Failed during download completion | JobId: {JobId} | ExceptionType: {ExceptionType}",
                     LogPrefix, job.Id, ex.GetType().Name);
-                
+
                 // Let base class UserJobBase.ExecuteAsync handle the status transition
                 // to avoid duplicate timeline entries
                 throw;

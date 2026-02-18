@@ -1,3 +1,4 @@
+using TorreClou.Core.DTOs.OAuth;
 using TorreClou.Core.DTOs.Storage.GoogleDrive;
 using TorreClou.Core.Shared;
 
@@ -11,7 +12,7 @@ namespace TorreClou.Core.Interfaces
         /// <summary>
         /// Save reusable OAuth app credentials.
         /// </summary>
-        Task<Result<(int CredentialId, string Name)>> SaveCredentialsAsync(int userId, SaveGoogleDriveCredentialsRequestDto request);
+        Task<Result<SavedCredentialsDto>> SaveCredentialsAsync(int userId, SaveGoogleDriveCredentialsRequestDto request);
 
         /// <summary>
         /// List saved OAuth app credentials for a user.

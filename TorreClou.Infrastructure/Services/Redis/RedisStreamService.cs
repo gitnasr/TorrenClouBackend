@@ -8,17 +8,9 @@ namespace TorreClou.Infrastructure.Services.Redis
     /// Implementation of IRedisStreamService using StackExchange.Redis.
     /// Provides stream publishing operations.
     /// </summary>
-    public class RedisStreamService : IRedisStreamService
+    public class RedisStreamService(IConnectionMultiplexer redis, ILogger<RedisStreamService> logger) : IRedisStreamService
     {
-        private readonly IConnectionMultiplexer _redis;
-        private readonly ILogger<RedisStreamService> _logger;
-        private IDatabase Database => _redis.GetDatabase();
-
-        public RedisStreamService(IConnectionMultiplexer redis, ILogger<RedisStreamService> logger)
-        {
-            _redis = redis;
-            _logger = logger;
-        }
+        private IDatabase Database => redis.GetDatabase();
 
         public async Task<string> PublishAsync(string streamKey, Dictionary<string, string> fields)
         {
@@ -26,15 +18,15 @@ namespace TorreClou.Infrastructure.Services.Redis
             {
                 var nameValueEntries = fields.Select(kvp => new NameValueEntry(kvp.Key, kvp.Value)).ToArray();
                 var messageId = await Database.StreamAddAsync(streamKey, nameValueEntries);
-                
-                _logger.LogDebug("Published to Redis stream | Stream: {Stream} | MessageId: {MessageId} | Fields: {FieldCount}",
+
+                logger.LogDebug("Published to Redis stream | Stream: {Stream} | MessageId: {MessageId} | Fields: {FieldCount}",
                     streamKey, messageId, fields.Count);
-                
+
                 return messageId.ToString();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error publishing to Redis stream | Stream: {Stream}", streamKey);
+                logger.LogError(ex, "Error publishing to Redis stream | Stream: {Stream}", streamKey);
                 throw;
             }
         }

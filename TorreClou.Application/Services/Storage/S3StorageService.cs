@@ -62,7 +62,7 @@ namespace TorreClou.Application.Services.Storage
             {
                 UserId = userId,
                 ProfileName = profileName,
-                ProviderType = StorageProviderType.AwsS3,
+                ProviderType = StorageProviderType.S3,
                 CredentialsJson = credentialsJson,
                 IsDefault = setAsDefault,
                 IsActive = true

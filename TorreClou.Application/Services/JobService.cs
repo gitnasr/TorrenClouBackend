@@ -1,18 +1,15 @@
-using System.Text.Json;
 using Hangfire;
-using Hangfire.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TorreClou.Core.DTOs.Common;
 using TorreClou.Core.DTOs.Jobs;
-
 using TorreClou.Core.Entities.Jobs;
+using TorreClou.Core.Entities.Torrents;
 using TorreClou.Core.Enums;
+using TorreClou.Core.Extensions;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
-using TorreClou.Core.Extensions;
-using TorreClou.Core.Entities.Torrents;
 namespace TorreClou.Application.Services
 {
     public class JobService(
@@ -59,7 +56,7 @@ namespace TorreClou.Application.Services
             unitOfWork.Repository<UserJob>().Add(job);
             await unitOfWork.Complete();
 
-            logger.LogInformation("Job created | JobId: {JobId} | StorageProfileId: {StorageProfileId} | RequestFileId: {RequestFileId}", 
+            logger.LogInformation("Job created | JobId: {JobId} | StorageProfileId: {StorageProfileId} | RequestFileId: {RequestFileId}",
                 job.Id, storageProfile.Id, torrentFileId);
 
             // 5. Record initial status in timeline
@@ -79,7 +76,7 @@ namespace TorreClou.Application.Services
                 { "createdAt", DateTime.UtcNow.ToString("O") }
             });
 
-            logger.LogInformation("Job creation and dispatch completed successfully | JobId: {JobId} | UserId: {UserId}", 
+            logger.LogInformation("Job creation and dispatch completed successfully | JobId: {JobId} | UserId: {UserId}",
                 job.Id, userId);
 
             return Result.Success(new JobCreationResult
@@ -93,9 +90,9 @@ namespace TorreClou.Application.Services
             logger.LogDebug("Get user jobs requested | UserId: {UserId} | Page: {PageNumber} | PageSize: {PageSize} | Status: {Status}", userId, pageNumber, pageSize, status);
 
             var spec = new UserJobsSpecification(userId, pageNumber, pageSize, status);
-            var countSpec = new BaseSpecification<UserJob>(job => 
+            var countSpec = new BaseSpecification<UserJob>(job =>
                 job.UserId == userId && (status == null || job.Status == status)
-               ); 
+               );
 
             var jobs = await unitOfWork.Repository<UserJob>().ListAsync(spec);
             var totalCount = await unitOfWork.Repository<UserJob>().CountAsync(countSpec);
@@ -134,9 +131,9 @@ namespace TorreClou.Application.Services
         {
             logger.LogDebug("Get job by ID requested | JobId: {JobId} | UserId: {UserId} | Role: {Role}", jobId, userId, userRole);
 
-            var spec = new BaseSpecification<UserJob>(job => 
-                job.Id == jobId && 
-                job.UserId == userId ); 
+            var spec = new BaseSpecification<UserJob>(job =>
+                job.Id == jobId &&
+                job.UserId == userId);
             spec.AddInclude(job => job.StorageProfile);
             spec.AddInclude(job => job.RequestFile);
 
@@ -218,7 +215,7 @@ namespace TorreClou.Application.Services
 
             var spec = new ActiveJobsByStorageProfileSpecification(storageProfileId);
             var activeJobs = await unitOfWork.Repository<UserJob>().ListAsync(spec);
-            
+
             logger.LogDebug("Found {Count} active jobs for storage profile | StorageProfileId: {StorageProfileId}", activeJobs.Count, storageProfileId);
             return Result.Success(activeJobs);
         }
@@ -258,9 +255,7 @@ namespace TorreClou.Application.Services
             var previousStatus = job.Status;
             string? newHangfireJobId = null;
             JobStatus targetStatus;
-            StatusChangeSource source = userRole == UserRole.Admin
-                ? StatusChangeSource.System
-                : StatusChangeSource.User;
+            StatusChangeSource source = StatusChangeSource.User;
 
             if (IsUploadPhase(job.Status))
             {
@@ -283,7 +278,7 @@ namespace TorreClou.Application.Services
             job.ErrorMessage = null; // Clear previous error
             job.NextRetryAt = null; // Clear retry schedule
             job.LastHeartbeat = DateTime.UtcNow;
-            job.CurrentState = $"Manually retried by {(userRole == UserRole.Admin ? "admin" : "user")}";
+            job.CurrentState = $"Manually retried by {(userRole == UserRole.User)}";
 
             // 7. Record status transition with full audit trail
             await jobStatusService.TransitionJobStatusAsync(
@@ -355,11 +350,9 @@ namespace TorreClou.Application.Services
             job.CompletedAt = DateTime.UtcNow;
             job.HangfireJobId = null;
             job.HangfireUploadJobId = null;
-            job.CurrentState = $"Cancelled by {(userRole == UserRole.Admin ? "admin" : "user")}";
+            job.CurrentState = $"Cancelled by User";
 
-            StatusChangeSource source = userRole == UserRole.Admin
-                ? StatusChangeSource.System
-                : StatusChangeSource.User;
+            StatusChangeSource source = StatusChangeSource.User;
 
             // 9. Transition status (this will set job.Status and save all changes)
             await jobStatusService.TransitionJobStatusAsync(
@@ -389,11 +382,7 @@ namespace TorreClou.Application.Services
                 return Result<UserJob>.Failure(ErrorCode.JobNotFound, "Job not found.");
             }
 
-            if (userRole != UserRole.Admin && job.UserId != userId)
-            {
-                logger.LogWarning("Unauthorized {Operation} attempt | JobId: {JobId} | UserId: {UserId}", operation, job.Id, userId);
-                return Result<UserJob>.Failure(ErrorCode.Unauthorized, $"You don't have permission to {operation.ToLower()} this job.");
-            }
+
 
             return Result.Success(job);
         }

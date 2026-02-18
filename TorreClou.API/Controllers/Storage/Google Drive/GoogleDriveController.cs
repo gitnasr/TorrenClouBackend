@@ -23,7 +23,7 @@ namespace TorreClou.API.Controllers.Storage
             return HandleResult(result, value => new SaveGoogleDriveCredentialsResponseDto
             {
                 CredentialId = value.CredentialId,
-                Name = value.Name
+                Name = value.CredentialName
             });
         }
 

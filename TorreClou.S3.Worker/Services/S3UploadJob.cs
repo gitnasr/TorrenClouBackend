@@ -1,9 +1,9 @@
 using Amazon.S3;
-using Hangfire;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Buffers;
 using System.Text.Json;
+using TorreClou.Core.DTOs.Storage.S3;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
@@ -73,7 +73,7 @@ namespace TorreClou.S3.Worker.Services
                 LogPrefix, job.Id, lockExpiry);
 
             // 2. Validate storage profile
-            if (job.StorageProfile == null || job.StorageProfile.ProviderType != StorageProviderType.AwsS3)
+            if (job.StorageProfile == null || job.StorageProfile.ProviderType != StorageProviderType.S3)
             {
                 await MarkJobFailedAsync(job, "Invalid storage profile or not S3 provider.");
                 return;

@@ -1,5 +1,6 @@
 using System.Web;
 using Microsoft.Extensions.Configuration;
+using TorreClou.Core.DTOs.OAuth;
 using TorreClou.Core.DTOs.Storage.GoogleDrive;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
@@ -13,7 +14,7 @@ namespace TorreClou.Application.Services.Google_Drive
         IGoogleDriveAuthService googleDriveAuthService,
         IConfiguration configuration) : IGoogleDriveService
     {
-        public async Task<Result<(int CredentialId, string Name)>> SaveCredentialsAsync(int userId, SaveGoogleDriveCredentialsRequestDto request)
+        public async Task<Result<SavedCredentialsDto>> SaveCredentialsAsync(int userId, SaveGoogleDriveCredentialsRequestDto request)
         {
             return await googleDriveAuthService.SaveCredentialsAsync(userId, request);
         }

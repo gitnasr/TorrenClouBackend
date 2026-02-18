@@ -1,18 +1,17 @@
 using Amazon.S3;
 using Amazon.S3.Model;
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using TorreClou.Core.DTOs.Storage.S3;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
-using Microsoft.Extensions.Logging;
 
 namespace TorreClou.S3.Worker.Services
 {
     /// <summary>
     /// Service for S3-specific job operations including credential verification and lock management.
-    /// Implements NO FALLBACK policy - all credentials must come from UserStorageProfile.CredentialsJson.
     /// </summary>
     public class S3JobService : IS3JobService
     {
@@ -27,7 +26,6 @@ namespace TorreClou.S3.Worker.Services
             _logger = logger;
         }
 
-        /// <inheritdoc/>
         public async Task<Result<(string AccessKey, string SecretKey, string Endpoint, string BucketName)>>
             VerifyAndGetCredentialsAsync(UserStorageProfile profile, CancellationToken cancellationToken = default)
         {

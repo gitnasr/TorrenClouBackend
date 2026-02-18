@@ -1,21 +1,14 @@
+using TorreClou.Core.DTOs.OAuth;
 using TorreClou.Core.DTOs.Storage.GoogleDrive;
 using TorreClou.Core.Shared;
 
 namespace TorreClou.Core.Interfaces
 {
-    /// <summary>
-    /// Google Drive authentication service.
-    /// Credentials (ClientId/Secret) are saved once as reusable UserOAuthCredential.
-    /// Connecting a new Drive account references a saved credential.
-    /// </summary>
+
     public interface IGoogleDriveAuthService
     {
-        /// <summary>
-        /// Save reusable OAuth app credentials (ClientId, ClientSecret, RedirectUri).
-        /// Upserts by ClientId — if the user already saved the same ClientId, it updates.
-        /// </summary>
-        Task<Result<(int CredentialId, string Name)>> SaveCredentialsAsync(int userId, SaveGoogleDriveCredentialsRequestDto request);
 
+        Task<Result<SavedCredentialsDto>> SaveCredentialsAsync(int userId, SaveGoogleDriveCredentialsRequestDto request);
         /// <summary>
         /// List all saved OAuth app credentials for a user.
         /// </summary>

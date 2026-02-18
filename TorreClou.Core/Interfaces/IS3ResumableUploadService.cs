@@ -1,3 +1,4 @@
+using TorreClou.Core.DTOs.Storage.S3;
 using TorreClou.Core.Shared;
 
 namespace TorreClou.Core.Interfaces
@@ -34,16 +35,6 @@ namespace TorreClou.Core.Interfaces
         /// </summary>
         Task<Result<bool>> CheckObjectExistsAsync(string bucketName, string s3Key, CancellationToken cancellationToken = default);
 
-        /// <summary>
-        /// Uploads a file to S3 using multipart upload (convenience method that handles all the parts)
-        /// </summary>
-        Task<Result<string>> UploadFileAsync(string filePath, string credentialsJson, CancellationToken cancellationToken = default);
-    }
-
-    public class PartETag
-    {
-        public int PartNumber { get; set; }
-        public string ETag { get; set; } = string.Empty;
     }
 }
 

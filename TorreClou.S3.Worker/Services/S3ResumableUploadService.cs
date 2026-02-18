@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
-using PartETag = TorreClou.Core.Interfaces.PartETag;
+using PartETag = TorreClou.Core.DTOs.Storage.S3.PartETag;
 
 namespace TorreClou.S3.Worker.Services
 {
@@ -57,7 +57,7 @@ namespace TorreClou.S3.Worker.Services
             }
         }
 
-        public async Task<Result<Core.Interfaces.PartETag>> UploadPartAsync(string bucketName, string s3Key, string uploadId, int partNumber, Stream partData, CancellationToken cancellationToken = default)
+        public async Task<Result<PartETag>> UploadPartAsync(string bucketName, string s3Key, string uploadId, int partNumber, Stream partData, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -236,13 +236,6 @@ namespace TorreClou.S3.Worker.Services
             }
         }
 
-        public Task<Result<string>> UploadFileAsync(string filePath, string credentialsJson, CancellationToken cancellationToken = default)
-        {
-            // This method is deprecated in the worker context - we use multipart upload with explicit credentials
-            throw new NotSupportedException(
-                "UploadFileAsync with credentialsJson is not supported in S3 Worker. " +
-                "Use multipart upload methods (InitiateUploadAsync, UploadPartAsync, CompleteUploadAsync) instead. " +
-                "Credentials should be provided via S3JobService.VerifyAndGetCredentialsAsync and used to create the S3 client.");
-        }
+
     }
 }

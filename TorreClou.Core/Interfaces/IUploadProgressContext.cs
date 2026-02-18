@@ -10,7 +10,6 @@ namespace TorreClou.Core.Interfaces
     {
         bool IsConfigured { get; }
 
-        Task ClearJobStateAsync(int jobId);
         Task ClearResumeUriAsync(string relativePath);
         void Configure(int jobId, long totalBytes, ILogger logger, Func<string, double, Task> onDbUpdate);
         Task<string?> GetCompletedFileAsync(string relativePath);

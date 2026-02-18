@@ -1,18 +1,16 @@
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Interfaces.Hangfire;
 using TorreClou.Core.Specifications;
-using TorreClou.Infrastructure.Settings;
 using TorreClou.Infrastructure.Workers;
 
 
 namespace TorreClou.GoogleDrive.Worker.Services
 {
-   
-    public class GoogleDriveUploadJob(
+
+    public partial class GoogleDriveUploadJob(
         IUnitOfWork unitOfWork,
         ILogger<GoogleDriveUploadJob> logger,
         IGoogleDriveJobService googleDriveService,
@@ -30,7 +28,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
             spec.AddInclude(j => j.User);
         }
 
-      
+
         public new async Task ExecuteAsync(int jobId, CancellationToken cancellationToken = default)
         {
             await base.ExecuteAsync(jobId, cancellationToken);
@@ -38,30 +36,70 @@ namespace TorreClou.GoogleDrive.Worker.Services
 
         protected override async Task ExecuteCoreAsync(UserJob job, CancellationToken cancellationToken)
         {
-            // FIX: Extended lock time to 2 hours to cover large file uploads
-            var lockKey = $"gdrive:lock:{job.Id}";
-            var lockExpiry = TimeSpan.FromHours(2); // Maybe we can make it configurable in the future, but for now we want to be very conservative to prevent multiple workers processing the same job and causing duplicate uploads or
+            using var distributedLock = await AcquireJobLockAsync(job, cancellationToken);
+            if (distributedLock == null) return;
 
-            using var distributedLock = await redisLockService.AcquireLockAsync(lockKey, lockExpiry, cancellationToken);
+            await HandleStatusTransitionAsync(job);
+
+            if (!await ValidateEnvironmentAsync(job)) return;
+
+            var accessToken = await AuthenticateAsync(job, cancellationToken);
+            if (accessToken == null) return;
+
+            var allFiles = GetFilesToUpload(job.DownloadPath!);
+            if (allFiles.Length == 0)
+            {
+                await MarkJobFailedAsync(job, "No valid files found in download path.");
+                return;
+            }
+
+            var totalBytes = allFiles.Sum(f => f.Length);
+            var uploadStartTime = DateTime.UtcNow;
+
+            ConfigureProgressContext(job, totalBytes);
+
+            var rootFolderId = await EnsureRootFolderExistsAsync(job, accessToken, cancellationToken);
+            if (rootFolderId == null) return;
+
+            var filesToProcess = await FilterAlreadyUploadedFilesAsync(allFiles, job.DownloadPath!);
+            var folderIdMap = await CreateFolderHierarchyAsync([.. filesToProcess], job.DownloadPath!, rootFolderId, accessToken, cancellationToken);
+            var result = await UploadFilesAsync(job, [.. filesToProcess], folderIdMap, accessToken, cancellationToken);
+
+            await FinalizeJobAsync(job, result, totalBytes, allFiles.Length, uploadStartTime);
+        }
+
+        // --- Step Handlers ---
+
+        private async Task<IRedisLock?> AcquireJobLockAsync(UserJob job, CancellationToken token)
+        {
+            var lockKey = $"gdrive:lock:{job.Id}";
+            // FIX: Extended lock time to 2 hours to cover large file uploads
+            var lockExpiry = TimeSpan.FromHours(2);
+
+            var distributedLock = await redisLockService.AcquireLockAsync(lockKey, lockExpiry, token);
 
             if (distributedLock == null)
             {
                 Logger.LogWarning("{LogPrefix} Job is already being processed by another instance | JobId: {JobId}",
                     LogPrefix, job.Id);
-                return;
+                return null;
             }
 
             Logger.LogInformation("{LogPrefix} Acquired Redis lock | JobId: {JobId} | Expiry: {Expiry}",
                 LogPrefix, job.Id, lockExpiry);
 
-            // 1. Handle Status Transitions
+            return distributedLock;
+        }
+
+        private async Task HandleStatusTransitionAsync(UserJob job)
+        {
             if (job.Status == JobStatus.PENDING_UPLOAD)
             {
                 Logger.LogInformation("{LogPrefix} Job ready for upload, transitioning to UPLOADING | JobId: {JobId}", LogPrefix, job.Id);
                 job.CurrentState = "Starting upload...";
                 if (job.StartedAt == null) job.StartedAt = DateTime.UtcNow;
                 job.LastHeartbeat = DateTime.UtcNow;
-                
+
                 await JobStatusService.TransitionJobStatusAsync(
                     job,
                     JobStatus.UPLOADING,
@@ -73,7 +111,7 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 Logger.LogInformation("{LogPrefix} Retrying job | JobId: {JobId} | Retry: {NextRetry}", LogPrefix, job.Id, job.NextRetryAt);
                 job.CurrentState = "Retrying upload...";
                 job.LastHeartbeat = DateTime.UtcNow;
-                
+
                 await JobStatusService.TransitionJobStatusAsync(
                     job,
                     JobStatus.UPLOADING,
@@ -94,45 +132,43 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 // Warn but allow execution (could be manual trigger)
                 Logger.LogWarning("{LogPrefix} Unexpected status: {Status} | JobId: {JobId}", LogPrefix, job.Status, job.Id);
             }
+        }
 
-            // 2. Validate Environment
+        private async Task<bool> ValidateEnvironmentAsync(UserJob job)
+        {
             if (string.IsNullOrEmpty(job.DownloadPath) || !Directory.Exists(job.DownloadPath))
             {
                 await MarkJobFailedAsync(job, $"Download path not found: {job.DownloadPath}");
-                return;
+                return false;
             }
 
             if (job.StorageProfile == null || job.StorageProfile.ProviderType != StorageProviderType.GoogleDrive)
             {
                 await MarkJobFailedAsync(job, "Invalid storage profile.");
-                return;
+                return false;
             }
 
-            // 3. Get Auth Token (always refresh to prevent mid-job expiration)
+            return true;
+        }
+
+        private async Task<string?> AuthenticateAsync(UserJob job, CancellationToken token)
+        {
             await UpdateHeartbeatAsync(job, "Authenticating...");
-            var tokenResult = await googleDriveService.GetAccessTokenAsync(job.StorageProfile, cancellationToken);
+
+            var tokenResult = await googleDriveService.GetAccessTokenAsync(job.StorageProfile, token);
             if (tokenResult.IsFailure)
             {
                 await MarkJobFailedAsync(job, $"Auth failed: {tokenResult.Error.Message}");
-                return;
+                return null;
             }
-            var accessToken = tokenResult.Value;
-            
+
             // Token refresh has already persisted changes, but ensure we save any other job updates
             await UnitOfWork.Complete();
+            return tokenResult.Value;
+        }
 
-            // 4. Get Files (Using CORRECTED Filter Logic)
-            var filesToUpload = GetFilesToUpload(job.DownloadPath);
-            if (filesToUpload.Length == 0)
-            {
-                await MarkJobFailedAsync(job, "No valid files found in download path.");
-                return;
-            }
-
-            var totalBytes = filesToUpload.Sum(f => f.Length);
-            var uploadStartTime = DateTime.UtcNow;
-
-            // 5. Configure Progress Context
+        private void ConfigureProgressContext(UserJob job, long totalBytes)
+        {
             progressContext.Configure(
                 job.Id,
                 totalBytes,
@@ -143,17 +179,15 @@ namespace TorreClou.GoogleDrive.Worker.Services
                     job.LastHeartbeat = DateTime.UtcNow;
                     await UnitOfWork.Complete();
                 });
+        }
 
-            // 6. Ensure Root Folder Exists
-            await UpdateHeartbeatAsync(job, "Checking Google Drive folder...");
-            var rootFolderId = await EnsureRootFolderExistsAsync(job, accessToken, cancellationToken);
-            if (rootFolderId == null) return; // Error handled inside helper
-
-            // 7. Filter Already Uploaded Files (Redis Check)
+        private async Task<List<FileInfo>> FilterAlreadyUploadedFilesAsync(FileInfo[] files, string downloadPath)
+        {
             var filesToProcess = new List<FileInfo>();
-            foreach (var file in filesToUpload)
+
+            foreach (var file in files)
             {
-                var relativePath = Path.GetRelativePath(job.DownloadPath, file.FullName);
+                var relativePath = Path.GetRelativePath(downloadPath, file.FullName);
                 var completedId = await progressContext.GetCompletedFileAsync(relativePath);
 
                 if (!string.IsNullOrEmpty(completedId))
@@ -167,13 +201,11 @@ namespace TorreClou.GoogleDrive.Worker.Services
                 }
             }
 
-            // 8. Create Folder Hierarchy
-            var folderIdMap = await CreateFolderHierarchyAsync(filesToProcess.ToArray(), job.DownloadPath, rootFolderId, accessToken, cancellationToken);
+            return filesToProcess;
+        }
 
-            // 9. Upload Files
-            var result = await UploadFilesAsync(job, [.. filesToProcess], folderIdMap, accessToken, cancellationToken);
-
-            // 10. Finalize Job
+        private async Task FinalizeJobAsync(UserJob job, UploadResult result, long totalBytes, int fileCount, DateTime uploadStartTime)
+        {
             if (!result.AllFilesUploaded)
             {
                 await MarkJobFailedAsync(job, $"Failed to upload {result.FailedFiles} of {result.TotalFiles} files.", hasRetries: true);
@@ -186,17 +218,19 @@ namespace TorreClou.GoogleDrive.Worker.Services
             job.CompletedAt = DateTime.UtcNow;
             job.CurrentState = "Upload completed successfully";
             job.NextRetryAt = null;
-            
+
             await JobStatusService.TransitionJobStatusAsync(
                 job,
                 JobStatus.COMPLETED,
                 StatusChangeSource.Worker,
-                metadata: new { totalBytes, filesCount = filesToUpload.Length, durationSeconds = duration, completedAt = job.CompletedAt });
+                metadata: new { totalBytes, filesCount = fileCount, durationSeconds = duration, completedAt = job.CompletedAt });
 
             Logger.LogInformation("{LogPrefix} Completed successfully | JobId: {JobId}", LogPrefix, job.Id);
         }
 
-        protected  override async Task MarkJobFailedAsync(UserJob job, string errorMessage, bool hasRetries = false)
+        // --- Failure Hook ---
+
+        protected override async Task MarkJobFailedAsync(UserJob job, string errorMessage, bool hasRetries = false)
         {
             try
             {
@@ -210,7 +244,6 @@ namespace TorreClou.GoogleDrive.Worker.Services
             }
             finally
             {
-                // Call base implementation to mark job as failed
                 await base.MarkJobFailedAsync(job, errorMessage, hasRetries);
             }
         }
@@ -243,6 +276,8 @@ namespace TorreClou.GoogleDrive.Worker.Services
 
         private async Task<string?> EnsureRootFolderExistsAsync(UserJob job, string accessToken, CancellationToken token)
         {
+            await UpdateHeartbeatAsync(job, "Checking Google Drive folder...");
+
             var rootId = await progressContext.GetRootFolderIdAsync(job.Id);
             if (!string.IsNullOrEmpty(rootId)) return rootId;
 
@@ -298,8 +333,6 @@ namespace TorreClou.GoogleDrive.Worker.Services
             }
             return map;
         }
-
-        private sealed class UploadResult { public int TotalFiles; public int FailedFiles; public bool AllFilesUploaded => FailedFiles == 0; }
 
         private async Task<UploadResult> UploadFilesAsync(
             UserJob job,

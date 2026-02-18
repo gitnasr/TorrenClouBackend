@@ -1,57 +1,57 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 using TorreClou.Application.Services.OAuth;
 using TorreClou.Application.Validators;
+using TorreClou.Core.DTOs.OAuth;
+using TorreClou.Core.DTOs.Storage.Google_Drive;
+using TorreClou.Core.DTOs.Storage.GoogleDrive;
 using TorreClou.Core.Entities;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Shared;
-using TorreClou.Core.Specifications;
-using TorreClou.Core.DTOs.Storage.Google_Drive;
-using TorreClou.Core.DTOs.Storage.GoogleDrive;
-
 namespace TorreClou.Application.Services
 {
     public class GoogleDriveAuthService(
-        IUnitOfWork unitOfWork,
         IOAuthStateService oauthStateService,
         IGoogleApiClient googleApiClient,
+        IOAuthService OAuthService,
+        IStorageProfilesService profilesService,
+        IUserService userService,
         ILogger<GoogleDriveAuthService> logger) : IGoogleDriveAuthService
     {
         private const string RedisKeyPrefixConfigure = "oauth:gdrive:state:";
 
-        /// <summary>
-        /// Save reusable OAuth app credentials — upserts by ClientId.
-        /// </summary>
-        public async Task<Result<(int CredentialId, string Name)>> SaveCredentialsAsync(int userId, SaveGoogleDriveCredentialsRequestDto request)
+
+        public async Task<Result<SavedCredentialsDto>> SaveCredentialsAsync(int userId, SaveGoogleDriveCredentialsRequestDto request)
         {
             try
             {
                 var credentialValidation = StorageProfileValidator.ValidateGoogleDriveCredentials(
                     request.ClientId, request.ClientSecret, request.RedirectUri);
                 if (credentialValidation.IsFailure)
-                    return Result<(int, string)>.Failure(credentialValidation.Error);
+                    return Result<SavedCredentialsDto>.Failure(credentialValidation.Error);
 
                 var finalName = !string.IsNullOrWhiteSpace(request.Name)
                     ? request.Name.Trim()
                     : "My GCP Credentials";
 
-                // Upsert: if user already saved a credential with the same ClientId, update it
-                var existingSpec = new BaseSpecification<UserOAuthCredential>(
-                    c => c.UserId == userId && c.ClientId == request.ClientId
-                );
-                var existing = await unitOfWork.Repository<UserOAuthCredential>().GetEntityWithSpec(existingSpec);
+                var userCredentials = await OAuthService.GetUserOAuthCredentialByClientId(request.ClientId, userId);
 
-                if (existing != null)
+                if (userCredentials != null)
                 {
-                    existing.Name = finalName;
-                    existing.ClientSecret = request.ClientSecret;
-                    existing.RedirectUri = request.RedirectUri;
-                    await unitOfWork.Complete();
+                    userCredentials.Name = finalName;
+                    userCredentials.ClientSecret = request.ClientSecret;
+                    userCredentials.RedirectUri = request.RedirectUri;
+                    await OAuthService.Update(userCredentials);
 
-                    logger.LogInformation("Updated OAuth credential {CredentialId} for user {UserId}", existing.Id, userId);
-                    return Result.Success((existing.Id, finalName));
+                    logger.LogInformation("Updated OAuth credential {CredentialId} for user {UserId}", userCredentials.Id, userId);
+                    return Result.Success(new SavedCredentialsDto()
+                    {
+                        CredentialId = userCredentials.Id,
+                        CredentialName = finalName,
+
+                    });
                 }
 
                 var credential = new UserOAuthCredential
@@ -63,29 +63,28 @@ namespace TorreClou.Application.Services
                     RedirectUri = request.RedirectUri
                 };
 
-                unitOfWork.Repository<UserOAuthCredential>().Add(credential);
-                await unitOfWork.Complete();
+                var userOAuthCredential = await OAuthService.Add(credential);
 
-                logger.LogInformation("Saved new OAuth credential {CredentialId} for user {UserId}", credential.Id, userId);
-                return Result.Success((credential.Id, finalName));
+                logger.LogInformation("Saved new OAuth credential {CredentialId} for user {UserId}", userOAuthCredential.Id, userId);
+                return Result.Success(new SavedCredentialsDto()
+                {
+                    CredentialId = userOAuthCredential.Id,
+                    CredentialName = finalName,
+                });
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Error saving OAuth credentials for user {UserId}", userId);
-                return Result<(int, string)>.Failure(ErrorCode.UnexpectedError, "Failed to save credentials");
+                return Result<SavedCredentialsDto>.Failure(ErrorCode.UnexpectedError, "Failed to save credentials");
             }
         }
 
-        /// <summary>
-        /// List all saved OAuth app credentials for a user.
-        /// </summary>
+
         public async Task<Result<List<OAuthCredentialDto>>> GetCredentialsAsync(int userId)
         {
             try
             {
-                var spec = new BaseSpecification<UserOAuthCredential>(c => c.UserId == userId);
-                var credentials = await unitOfWork.Repository<UserOAuthCredential>().ListAsync(spec);
-
+                var credentials = await OAuthService.GetAll(userId);
                 var dtos = credentials.Select(c => new OAuthCredentialDto
                 {
                     Id = c.Id,
@@ -104,18 +103,13 @@ namespace TorreClou.Application.Services
             }
         }
 
-        /// <summary>
-        /// Connect a new Google Drive account: creates profile + starts OAuth flow.
-        /// </summary>
         public async Task<Result<string>> ConnectAsync(int userId, ConnectGoogleDriveRequestDto request)
         {
             try
             {
                 // Load the credential
-                var credSpec = new BaseSpecification<UserOAuthCredential>(
-                    c => c.Id == request.CredentialId && c.UserId == userId
-                );
-                var credential = await unitOfWork.Repository<UserOAuthCredential>().GetEntityWithSpec(credSpec);
+                var credential = await OAuthService.GetUserOAuthCredentialById(request.CredentialId, userId);
+
                 if (credential == null)
                     return Result<string>.Failure(ErrorCode.CredentialNotFound, "OAuth credential not found");
 
@@ -123,7 +117,6 @@ namespace TorreClou.Application.Services
                     ? request.ProfileName.Trim()
                     : "My Google Drive";
 
-                // Create the profile immediately (unauthenticated — tokens come from callback)
                 var profile = new UserStorageProfile
                 {
                     UserId = userId,
@@ -136,29 +129,24 @@ namespace TorreClou.Application.Services
                     NeedsReauth = false,
                     OAuthCredentialId = credential.Id
                 };
-
-                unitOfWork.Repository<UserStorageProfile>().Add(profile);
+                await profilesService.Add(profile);
 
                 // Handle SetAsDefault
                 if (request.SetAsDefault)
                 {
-                    var allProfilesSpec = new BaseSpecification<UserStorageProfile>(p => p.UserId == userId && p.IsActive);
-                    var allProfiles = await unitOfWork.Repository<UserStorageProfile>().ListAsync(allProfilesSpec);
-                    foreach (var p in allProfiles)
-                        p.IsDefault = false;
-                    profile.IsDefault = true;
+                    await profilesService.SetDefaultProfileAsync(userId, profile.Id);
                 }
                 else
                 {
-                    var defaultProfileSpec = new BaseSpecification<UserStorageProfile>(
-                        p => p.UserId == userId && p.IsDefault && p.IsActive
-                    );
-                    var hasDefault = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(defaultProfileSpec) != null;
+
+                    var hasDefault = await profilesService.HasDefaultProfile(userId);
                     if (!hasDefault)
                         profile.IsDefault = true;
-                }
 
-                await unitOfWork.Complete();
+                }
+                await profilesService.Save();
+
+
 
                 // Build OAuth state referencing credentialId
                 var oauthState = new OAuthState
@@ -188,17 +176,11 @@ namespace TorreClou.Application.Services
             }
         }
 
-        /// <summary>
-        /// Re-initiate OAuth consent flow for a profile whose refresh token has expired.
-        /// </summary>
         public async Task<Result<string>> ReauthenticateAsync(int userId, int profileId)
         {
             try
             {
-                var spec = new BaseSpecification<UserStorageProfile>(
-                    p => p.Id == profileId && p.UserId == userId && p.IsActive
-                );
-                var profile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(spec);
+                var profile = await profilesService.GetProfileBySpecAsync(userId, profileId);
                 if (profile == null)
                     return Result<string>.Failure(ErrorCode.ProfileNotFound, "Storage profile not found");
 
@@ -209,8 +191,8 @@ namespace TorreClou.Application.Services
                     return Result<string>.Failure(ErrorCode.MissingCredentials, "Profile has no linked OAuth credentials. Please connect using a saved credential.");
 
                 // Load the linked credential
-                var credential = await unitOfWork.Repository<UserOAuthCredential>().GetByIdAsync(profile.OAuthCredentialId.Value);
-                if (credential == null || credential.UserId != userId)
+                var credential = await OAuthService.GetUserOAuthCredentialById(profile.OAuthCredentialId.Value, userId);
+                if (credential == null)
                     return Result<string>.Failure(ErrorCode.CredentialNotFound, "Linked OAuth credential not found");
 
                 var oauthState = new OAuthState
@@ -253,7 +235,7 @@ namespace TorreClou.Application.Services
                 var userId = storedState.UserId;
 
                 // Verify user exists
-                var user = await unitOfWork.Repository<Core.Entities.User>().GetByIdAsync(userId);
+                var user = await userService.GetUserByIdAsync(userId);
                 if (user == null)
                 {
                     logger.LogWarning("OAuth callback attempted for non-existent user {UserId}", userId);
@@ -261,8 +243,8 @@ namespace TorreClou.Application.Services
                 }
 
                 // Load the credential from DB by OAuthCredentialId
-                var credential = await unitOfWork.Repository<UserOAuthCredential>().GetByIdAsync(storedState.OAuthCredentialId);
-                if (credential == null || credential.UserId != userId)
+                var credential = await OAuthService.GetUserOAuthCredentialById(storedState.OAuthCredentialId, userId);
+                if (credential == null)
                     return Result<int>.Failure(ErrorCode.CredentialNotFound, "OAuth credential not found. Please save credentials and try again.");
 
                 var clientId = credential.ClientId;
@@ -295,26 +277,15 @@ namespace TorreClou.Application.Services
                 if (storedState.ProfileId.HasValue)
                 {
                     // Load existing profile (created in ConnectAsync or existing for re-auth)
-                    var existingProfileSpec = new BaseSpecification<UserStorageProfile>(
-                        p => p.Id == storedState.ProfileId.Value && p.UserId == userId
-                    );
-                    var existingProfile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(existingProfileSpec);
+                    var existingProfile = await profilesService.GetProfileBySpecAsync(userId, storedState.ProfileId.Value, activeOnly: false);
                     if (existingProfile == null)
                         return Result<int>.Failure(ErrorCode.ProfileNotFound, "The profile associated with this authentication flow no longer exists.");
 
                     // Check for duplicate email on OTHER profiles
                     if (!string.IsNullOrEmpty(email))
                     {
-                        var duplicateSpec = new BaseSpecification<UserStorageProfile>(
-                            p => p.UserId == userId
-                                && p.Id != existingProfile.Id
-                                && p.ProviderType == StorageProviderType.GoogleDrive
-                                && p.IsActive
-                                && p.Email != null
-                                && p.Email.ToLower() == email.ToLower()
-                        );
-                        var duplicateProfile = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(duplicateSpec);
-                        if (duplicateProfile != null)
+                        var hasDuplicate = await profilesService.HasDuplicateEmailAsync(userId, existingProfile.Id, email);
+                        if (hasDuplicate)
                             return Result<int>.Failure(ErrorCode.DuplicateEmail, $"This Google account ({email}) is already connected to another profile.");
                     }
 
@@ -344,7 +315,7 @@ namespace TorreClou.Application.Services
                         NeedsReauth = false,
                         OAuthCredentialId = credential.Id
                     };
-                    unitOfWork.Repository<UserStorageProfile>().Add(profile);
+                    await profilesService.AddWithoutSaveAsync(profile);
                 }
 
                 // Store only tokens in CredentialsJson (app creds live in UserOAuthCredential)
@@ -365,25 +336,22 @@ namespace TorreClou.Application.Services
                 // Handle default profile logic (only for new profiles without PreExisting ProfileId)
                 if (!storedState.ProfileId.HasValue)
                 {
-                    var defaultProfileSpec = new BaseSpecification<UserStorageProfile>(
-                        p => p.UserId == userId && p.IsDefault && p.IsActive
-                    );
-                    var hasDefault = await unitOfWork.Repository<UserStorageProfile>().GetEntityWithSpec(defaultProfileSpec) != null;
+                    var hasDefault = await profilesService.HasDefaultProfile(userId);
 
                     if (!hasDefault || storedState.SetAsDefault)
                     {
                         if (storedState.SetAsDefault && hasDefault)
                         {
-                            var allProfilesSpec = new BaseSpecification<UserStorageProfile>(p => p.UserId == userId && p.IsActive);
-                            var allProfiles = await unitOfWork.Repository<UserStorageProfile>().ListAsync(allProfilesSpec);
-                            foreach (var p in allProfiles)
-                                p.IsDefault = false;
+                            await profilesService.SetDefaultProfileAsync(userId, profile.Id);
                         }
-                        profile.IsDefault = true;
+                        else
+                        {
+                            profile.IsDefault = true;
+                        }
                     }
                 }
 
-                await unitOfWork.Complete();
+                await profilesService.Save();
 
                 logger.LogInformation("Google Drive OAuth completed for user {UserId}, profile {ProfileId}", userId, profile.Id);
                 return Result.Success(profile.Id);
