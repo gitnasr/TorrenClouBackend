@@ -24,7 +24,7 @@ namespace TorreClou.Application.Validators
 
         public static void ValidateGoogleDriveCredentials(string? clientId, string? clientSecret, string? redirectUri)
         {
-            if (string.IsNullOrEmpty(clientId) || !clientId.Contains(".apps.googleusercontent.com"))
+            if (string.IsNullOrEmpty(clientId) || !clientId.EndsWith(".apps.googleusercontent.com", StringComparison.OrdinalIgnoreCase))
                 throw new ValidationException("InvalidClientId", "Invalid Google Client ID format. It should end with .apps.googleusercontent.com");
 
             if (string.IsNullOrEmpty(clientSecret))

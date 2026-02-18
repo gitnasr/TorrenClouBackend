@@ -40,6 +40,12 @@ namespace TorreClou.Infrastructure.Services
             if (tokenResponse == null)
                 throw new ExternalServiceException("InvalidResponse", "Invalid token response");
 
+            if (string.IsNullOrWhiteSpace(tokenResponse.AccessToken))
+            {
+                logger.LogError("Token exchange returned empty access_token. ExpiresIn: {ExpiresIn}", tokenResponse.ExpiresIn);
+                throw new ExternalServiceException("InvalidResponse", "Token exchange response is missing access_token");
+            }
+
             if (string.IsNullOrEmpty(tokenResponse.RefreshToken))
                 logger.LogWarning("Token exchange response missing refresh_token. Access token expires in {ExpiresIn} seconds.", tokenResponse.ExpiresIn);
             else

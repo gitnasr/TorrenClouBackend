@@ -448,6 +448,20 @@ namespace TorreClou.S3.Worker.Services
             // Init new upload if needed
             if (string.IsNullOrEmpty(uploadId))
             {
+                if (existingProgress != null)
+                {
+                    try
+                    {
+                        await _s3JobService.DeleteUploadProgressAsync(existingProgress);
+                        Logger.LogInformation("{LogPrefix} Deleted stale progress record | JobId: {JobId} | Key: {Key}", LogPrefix, job.Id, s3Key);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning(ex, "{LogPrefix} Failed to delete stale progress, proceeding anyway | Key: {Key}", LogPrefix, s3Key);
+                    }
+                    progress = null;
+                }
+
                 Logger.LogInformation("{LogPrefix} Initiating new multipart upload | JobId: {JobId} | Key: {Key}", LogPrefix, job.Id, s3Key);
                 uploadId = await s3UploadService.InitiateUploadAsync(bucketName, s3Key, file.Length, cancellationToken: cancellationToken);
 

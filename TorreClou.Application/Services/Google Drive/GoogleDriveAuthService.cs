@@ -278,6 +278,8 @@ namespace TorreClou.Application.Services
             else
                 logger.LogInformation("Credentials saved successfully for profile {ProfileId} with refresh token present.", profile.Id);
 
+            await profilesService.Save();
+
             if (!storedState.ProfileId.HasValue)
             {
                 var hasDefault = await profilesService.HasDefaultProfile(userId);

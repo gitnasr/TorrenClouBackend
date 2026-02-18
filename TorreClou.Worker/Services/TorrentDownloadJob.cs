@@ -158,7 +158,7 @@ namespace TorreClou.Worker.Services
                 }
 
                 // Check if torrent is already complete (fast resume confirmed all pieces)
-                if (manager.Progress >= 100.0 && manager.State == TorrentState.Seeding)
+                if (manager.PartialProgress >= 100.0 && manager.State == TorrentState.Seeding)
                 {
                     Logger.LogInformation("{LogPrefix} Torrent already complete, dispatch to upload worker | JobId: {JobId}", LogPrefix, job.Id);
                     await OnDownloadCompleteAsync(job, _engine);
@@ -166,24 +166,31 @@ namespace TorreClou.Worker.Services
                 }
                 else
                 {
+                    if (manager.State == TorrentState.Error)
+                    {
+                        Logger.LogError("{LogPrefix} Torrent in error state after settle | JobId: {JobId}", LogPrefix, job.Id);
+                        await MarkJobFailedAsync(job, "Torrent entered error state during startup");
+                        return;
+                    }
+
                     // Download not complete, resume with normal monitoring flow
                     Logger.LogWarning("{LogPrefix} Torrent not complete, resuming to DOWNLOADING | JobId: {JobId} | Progress: {Progress}% | State: {State}",
-                        LogPrefix, job.Id, manager.Progress, manager.State);
+                        LogPrefix, job.Id, manager.PartialProgress, manager.State);
 
                     await JobStatusService.TransitionJobStatusAsync(
                         job,
                         JobStatus.DOWNLOADING,
                         StatusChangeSource.Worker,
-                        metadata: new { resuming = true, currentProgress = manager.Progress });
+                        metadata: new { resuming = true, currentProgress = manager.PartialProgress });
                 }
 
-                var actualBytesDownloaded = (long)(downloadableSize * (manager.Progress / 100.0));
+                var actualBytesDownloaded = (long)(downloadableSize * (manager.PartialProgress / 100.0));
                 job.BytesDownloaded = actualBytesDownloaded;
 
 
 
                 Logger.LogInformation("{LogPrefix} Download started | JobId: {JobId} | Initial State: {State} | ResumedBytes: {ResumedBytes} | Progress: {Progress}%",
-                    LogPrefix, job.Id, manager.State, actualBytesDownloaded, manager.Progress);
+                    LogPrefix, job.Id, manager.State, actualBytesDownloaded, manager.PartialProgress);
 
                 // 7. Monitor download progress
                 var success = await MonitorDownloadAsync(job, _engine, manager, cancellationToken);

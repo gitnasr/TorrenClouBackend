@@ -40,7 +40,8 @@ namespace TorreClou.Core.Entities.Jobs
       
         public long BytesDownloaded { get; set; }
 
-       
+        public long BytesUploaded { get; set; }
+
         public long TotalBytes { get; set; }
 
 

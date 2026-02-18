@@ -1,5 +1,6 @@
 using System.Web;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using TorreClou.Core.DTOs.OAuth;
 using TorreClou.Core.DTOs.Storage.GoogleDrive;
 using TorreClou.Core.Exceptions;
@@ -12,7 +13,8 @@ namespace TorreClou.Application.Services.Google_Drive
     /// </summary>
     public class GoogleDriveService(
         IGoogleDriveAuthService googleDriveAuthService,
-        IConfiguration configuration) : IGoogleDriveService
+        IConfiguration configuration,
+        ILogger<GoogleDriveService> logger) : IGoogleDriveService
     {
         public Task<SavedCredentialsDto> SaveCredentialsAsync(int userId, SaveGoogleDriveCredentialsRequestDto request)
             => googleDriveAuthService.SaveCredentialsAsync(userId, request);
@@ -43,8 +45,9 @@ namespace TorreClou.Application.Services.Google_Drive
             {
                 return $"{redirectBase}?error={HttpUtility.UrlEncode(ex.Code)}&message={HttpUtility.UrlEncode(ex.Message)}";
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                logger.LogError(ex, "Unhandled exception in GetGoogleCallback");
                 return $"{redirectBase}?error=InternalError&message={HttpUtility.UrlEncode("An unexpected error occurred")}";
             }
         }

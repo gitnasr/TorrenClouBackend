@@ -190,6 +190,10 @@ namespace TorreClou.Infrastructure.Services.Drive
             {
                 throw;
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Exception in FindOrCreateFolderAsync: {FolderName}", folderName);
@@ -371,10 +375,16 @@ namespace TorreClou.Infrastructure.Services.Drive
                     var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
                     var driveFile = JsonSerializer.Deserialize<FileUploadResponse>(responseJson);
 
+                    if (string.IsNullOrEmpty(driveFile?.Id))
+                    {
+                        logger.LogError("Drive file ID missing after successful upload. Raw response: {Response}", responseJson);
+                        throw new ExternalServiceException("InvalidResponse", "Google Drive did not return a file ID after upload");
+                    }
+
                     if (progressContext.IsConfigured)
                         await progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
 
-                    return driveFile?.Id ?? "";
+                    return driveFile.Id;
                 }
 
                 if ((int)response.StatusCode == 308)
@@ -398,10 +408,16 @@ namespace TorreClou.Infrastructure.Services.Drive
                             var responseJson = await finalResponse.Content.ReadAsStringAsync(cancellationToken);
                             var driveFile = JsonSerializer.Deserialize<FileUploadResponse>(responseJson);
 
+                            if (string.IsNullOrEmpty(driveFile?.Id))
+                            {
+                                logger.LogError("Drive file ID missing after successful finalization. Raw response: {Response}", responseJson);
+                                throw new ExternalServiceException("InvalidResponse", "Google Drive did not return a file ID after upload");
+                            }
+
                             if (progressContext.IsConfigured)
                                 await progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
 
-                            return driveFile?.Id ?? "";
+                            return driveFile.Id;
                         }
 
                         logger.LogWarning("Finalization request failed: {StatusCode} | File: {FileName}", finalResponse.StatusCode, fileName);
@@ -429,10 +445,16 @@ namespace TorreClou.Infrastructure.Services.Drive
                     var responseJson = await finalResponse.Content.ReadAsStringAsync(cancellationToken);
                     var driveFile = JsonSerializer.Deserialize<FileUploadResponse>(responseJson);
 
+                    if (string.IsNullOrEmpty(driveFile?.Id))
+                    {
+                        logger.LogError("Drive file ID missing after successful finalization (post-loop). Raw response: {Response}", responseJson);
+                        throw new ExternalServiceException("InvalidResponse", "Google Drive did not return a file ID after upload");
+                    }
+
                     if (progressContext.IsConfigured)
                         await progressContext.ReportProgressAsync(fileName, fileSize, fileSize);
 
-                    return driveFile?.Id ?? "";
+                    return driveFile.Id;
                 }
 
                 logger.LogWarning("Finalization request failed after loop exit: {StatusCode} | File: {FileName}", finalResponse.StatusCode, fileName);
