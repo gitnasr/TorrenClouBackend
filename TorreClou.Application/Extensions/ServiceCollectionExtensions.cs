@@ -23,6 +23,8 @@ namespace TorreClou.Application.Extensions
 
             services.AddScoped<IStorageProfilesService, StorageProfilesService>();
             services.AddScoped<IS3StorageService, S3StorageService>();
+            services.AddScoped<IUserService, UserService>();
+            services.AddScoped<IOAuthService, OAuthService>();
 
             return services;
         }

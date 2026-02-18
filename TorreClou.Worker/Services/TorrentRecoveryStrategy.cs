@@ -1,5 +1,4 @@
 using Hangfire;
-using Microsoft.Extensions.DependencyInjection;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
 using TorreClou.Core.Interfaces;
@@ -63,7 +62,7 @@ namespace TorreClou.Worker.Services
                     StorageProviderType.GoogleDrive =>
                         client.Enqueue<IGoogleDriveUploadJob>(x => x.ExecuteAsync(job.Id, CancellationToken.None)),
 
-                    StorageProviderType.AwsS3 =>
+                    StorageProviderType.S3 =>
                         client.Enqueue<IS3UploadJob>(x => x.ExecuteAsync(job.Id, CancellationToken.None)),
 
                     _ => throw new NotSupportedException($"No upload worker for provider: {provider}")
@@ -72,19 +71,19 @@ namespace TorreClou.Worker.Services
 
             // 2. DOWNLOAD PHASE RECOVERY
             userJob.CurrentState = "Recovering download phase...";
-            
+
             // Resolve IJobStatusService from a new scope and reload the job to ensure it's tracked
             using var scope = serviceScopeFactory.CreateScope();
             var jobStatusService = scope.ServiceProvider.GetRequiredService<IJobStatusService>();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            
+
             // Reload the job in the new scope to ensure it's tracked by the correct DbContext
             var trackedJob = await unitOfWork.Repository<UserJob>().GetByIdAsync(userJob.Id);
             if (trackedJob == null)
             {
                 throw new InvalidOperationException($"Job {userJob.Id} not found when attempting recovery");
             }
-            
+
             await jobStatusService.TransitionJobStatusAsync(
                 trackedJob,
                 JobStatus.QUEUED,

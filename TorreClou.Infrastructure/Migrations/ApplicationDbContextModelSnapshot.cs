@@ -23,44 +23,6 @@ namespace TorreClou.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("TorreClou.Core.Entities.Compliance.UserStrike", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("ViolationType")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("UserStrike", "dev");
-                });
-
             modelBuilder.Entity("TorreClou.Core.Entities.Jobs.JobStatusHistory", b =>
                 {
                     b.Property<int>("Id")
@@ -181,6 +143,9 @@ namespace TorreClou.Infrastructure.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<long>("BytesDownloaded")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("BytesUploaded")
                         .HasColumnType("bigint");
 
                     b.Property<DateTime?>("CompletedAt")
@@ -371,18 +336,6 @@ namespace TorreClou.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<string>("GoogleDriveEmail")
-                        .HasColumnType("text");
-
-                    b.Property<string>("GoogleDriveRefreshToken")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("GoogleDriveTokenCreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsGoogleDriveConnected")
-                        .HasColumnType("boolean");
-
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -433,17 +386,6 @@ namespace TorreClou.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("UserOAuthCredentials", "dev");
-                });
-
-            modelBuilder.Entity("TorreClou.Core.Entities.Compliance.UserStrike", b =>
-                {
-                    b.HasOne("TorreClou.Core.Entities.User", "User")
-                        .WithMany("Strikes")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("TorreClou.Core.Entities.Jobs.JobStatusHistory", b =>
@@ -543,8 +485,6 @@ namespace TorreClou.Infrastructure.Migrations
             modelBuilder.Entity("TorreClou.Core.Entities.User", b =>
                 {
                     b.Navigation("StorageProfiles");
-
-                    b.Navigation("Strikes");
 
                     b.Navigation("UploadedTorrentFiles");
                 });

@@ -31,14 +31,7 @@ namespace TorreClou.Core.Extensions
         public static bool IsCompleted(this JobStatus status) => status == JobStatus.COMPLETED;
         public static bool IsCancelled(this JobStatus status) => status == JobStatus.CANCELLED;
 
-        public static bool IsUploadPhase(this JobStatus status)
-        {
-            return status == JobStatus.PENDING_UPLOAD ||
-                   status == JobStatus.UPLOADING ||
-                   status == JobStatus.UPLOAD_RETRY ||
-                   status == JobStatus.UPLOAD_FAILED ||
-                   status == JobStatus.GOOGLE_DRIVE_FAILED;
-        }
+
 
         public static bool IsCancellable(this JobStatus status)
         {

@@ -1,72 +1,42 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 using TorreClou.Core.DTOs.Auth;
-using TorreClou.Core.Enums;
+using TorreClou.Core.Exceptions;
 using TorreClou.Core.Interfaces;
-using TorreClou.Core.Shared;
-using TorreClou.Core.Specifications;
 
 namespace TorreClou.Application.Services
 {
-    public class AuthService : IAuthService
+    public class AuthService(
+        IConfiguration configuration,
+        ITokenService tokenService,
+        IUserService userService
+        ) : IAuthService
     {
-        private readonly IConfiguration _configuration;
-        private readonly ITokenService _tokenService;
-        private readonly IUnitOfWork _unitOfWork;
-
-        public AuthService(
-            IConfiguration configuration,
-            ITokenService tokenService,
-            IUnitOfWork unitOfWork)
+        public async Task<AuthResponseDto> LoginAsync(string email, string password)
         {
-            _configuration = configuration;
-            _tokenService = tokenService;
-            _unitOfWork = unitOfWork;
-        }
-
-        public async Task<Result<AuthResponseDto>> LoginAsync(string email, string password)
-        {
-            // Get admin credentials from environment variables
-            var adminEmail = _configuration["ADMIN_EMAIL"] ?? "admin@gitnasr.com";
-            var adminPassword = _configuration["ADMIN_PASSWORD"] ?? "P@ssword123!";
-            var adminName = _configuration["ADMIN_NAME"] ?? "Admin";
+            var adminEmail = configuration["ADMIN_EMAIL"];
+            var adminPassword = configuration["ADMIN_PASSWORD"];
+            var adminName = configuration["ADMIN_NAME"] ?? "TorrenClou Admin";
 
             if (string.IsNullOrEmpty(adminEmail) || string.IsNullOrEmpty(adminPassword))
-            {
-                return Result<AuthResponseDto>.Failure(
-                    ErrorCode.ServerConfigError,
-                    "Admin credentials not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD in environment variables.");
-            }
+                throw new BusinessRuleException("ServerConfigError", "Admin credentials not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD in environment variables.");
 
-            // Simple credential validation (case-insensitive email)
             if (!email.Equals(adminEmail, StringComparison.OrdinalIgnoreCase) || password != adminPassword)
             {
                 await Task.Delay(100); // Prevent timing attacks
-                return Result<AuthResponseDto>.Failure(ErrorCode.InvalidCredentials, "Invalid email or password");
+                throw new UnauthorizedException("InvalidCredentials", "Invalid email or password");
             }
 
-            // Get or create user in database
-            var spec = new BaseSpecification<Core.Entities.User>(u => u.Email.ToLower() == adminEmail.ToLower());
-            var user = await _unitOfWork.Repository<Core.Entities.User>().GetEntityWithSpec(spec);
+            var user = await userService.GetUserByEmailAsync(adminEmail);
+            user ??= await userService.CreateUser(adminEmail, adminName);
 
-            if (user == null)
-            {
-                user = new Core.Entities.User
-                {
-                    Email = adminEmail,
-                    FullName = adminName
-                };
-                _unitOfWork.Repository<Core.Entities.User>().Add(user);
-                await _unitOfWork.Complete();
-            }
+            var token = tokenService.CreateToken(user);
 
-            var token = _tokenService.CreateToken(user);
-
-            return Result.Success(new AuthResponseDto
+            return new AuthResponseDto
             {
                 AccessToken = token,
                 Email = user.Email,
                 FullName = user.FullName
-            });
+            };
         }
     }
 }

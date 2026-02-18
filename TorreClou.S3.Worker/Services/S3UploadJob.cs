@@ -1,14 +1,14 @@
 using Amazon.S3;
-using Hangfire;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Buffers;
 using System.Text.Json;
+using TorreClou.Core.DTOs.Storage.S3;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
+using TorreClou.Core.Exceptions;
 using TorreClou.Core.Interfaces;
 using TorreClou.Core.Interfaces.Hangfire;
-using TorreClou.Core.Shared;
 using TorreClou.Core.Specifications;
 using TorreClou.Infrastructure.Workers;
 using TorreClou.S3.Worker.Interfaces;
@@ -21,12 +21,14 @@ namespace TorreClou.S3.Worker.Services
         IS3JobService s3JobService,
         IS3ResumableUploadServiceFactory s3UploadServiceFactory,
         IJobStatusService jobStatusService,
+        IJobService jobService,
         IServiceScopeFactory serviceScopeFactory,
         IRedisLockService redisLockService)
         : UserJobBase<S3UploadJob>(unitOfWork, logger, jobStatusService), IS3UploadJob
     {
         private readonly IS3JobService _s3JobService = s3JobService;
         private readonly IS3ResumableUploadServiceFactory _s3UploadServiceFactory = s3UploadServiceFactory;
+        private readonly IJobService _jobService = jobService;
         private readonly IServiceScopeFactory _serviceScopeFactory = serviceScopeFactory;
         private readonly IRedisLockService _redisLockService = redisLockService;
         private const long PartSize = 10 * 1024 * 1024; // 10MB
@@ -73,7 +75,7 @@ namespace TorreClou.S3.Worker.Services
                 LogPrefix, job.Id, lockExpiry);
 
             // 2. Validate storage profile
-            if (job.StorageProfile == null || job.StorageProfile.ProviderType != StorageProviderType.AwsS3)
+            if (job.StorageProfile == null || job.StorageProfile.ProviderType != StorageProviderType.S3)
             {
                 await MarkJobFailedAsync(job, "Invalid storage profile or not S3 provider.");
                 return;
@@ -83,14 +85,7 @@ namespace TorreClou.S3.Worker.Services
             Logger.LogInformation("{LogPrefix} Verifying S3 credentials | JobId: {JobId} | ProfileId: {ProfileId}",
                 LogPrefix, job.Id, job.StorageProfile.Id);
 
-            var credResult = await _s3JobService.VerifyAndGetCredentialsAsync(job.StorageProfile, cancellationToken);
-            if (credResult.IsFailure)
-            {
-                await MarkJobFailedAsync(job, $"Invalid S3 credentials: {credResult.Error.Message}");
-                return;
-            }
-
-            var (accessKey, secretKey, endpoint, bucketName) = credResult.Value;
+            var (accessKey, secretKey, endpoint, bucketName) = await _s3JobService.VerifyAndGetCredentialsAsync(job.StorageProfile, cancellationToken);
 
             Logger.LogInformation("{LogPrefix} Credentials verified | JobId: {JobId} | Bucket: {Bucket} | Endpoint: {Endpoint}",
                 LogPrefix, job.Id, bucketName, endpoint);
@@ -113,44 +108,7 @@ namespace TorreClou.S3.Worker.Services
                 LogPrefix, job.Id);
 
             // 4. Handle Status Transitions
-            if (job.Status == JobStatus.PENDING_UPLOAD)
-            {
-                Logger.LogInformation("{LogPrefix} Job ready for upload, transitioning to UPLOADING | JobId: {JobId}", LogPrefix, job.Id);
-                job.CurrentState = "Starting S3 upload...";
-                if (job.StartedAt == null) job.StartedAt = DateTime.UtcNow;
-                job.LastHeartbeat = DateTime.UtcNow;
-
-                await JobStatusService.TransitionJobStatusAsync(
-                    job,
-                    JobStatus.UPLOADING,
-                    StatusChangeSource.Worker,
-                    metadata: new { provider = "S3", startedAt = job.StartedAt, bucket = bucketName });
-            }
-            else if (job.Status == JobStatus.UPLOAD_RETRY)
-            {
-                Logger.LogInformation("{LogPrefix} Retrying job | JobId: {JobId} | Retry: {NextRetry}", LogPrefix, job.Id, job.NextRetryAt);
-                job.CurrentState = "Retrying S3 upload...";
-                job.LastHeartbeat = DateTime.UtcNow;
-
-                await JobStatusService.TransitionJobStatusAsync(
-                    job,
-                    JobStatus.UPLOADING,
-                    StatusChangeSource.Worker,
-                    metadata: new { provider = "S3", retrying = true, previousNextRetry = job.NextRetryAt });
-            }
-            else if (job.Status == JobStatus.UPLOADING)
-            {
-                if (job.StartedAt == null)
-                {
-                    job.StartedAt = DateTime.UtcNow;
-                    await UnitOfWork.Complete();
-                }
-                Logger.LogInformation("{LogPrefix} Resuming job from recovery | JobId: {JobId}", LogPrefix, job.Id);
-            }
-            else
-            {
-                Logger.LogWarning("{LogPrefix} Unexpected status: {Status} | JobId: {JobId}", LogPrefix, job.Status, job.Id);
-            }
+            await TransitionJobStatusAsync(job, bucketName, cancellationToken);
 
             // 5. Validate download path
             if (string.IsNullOrEmpty(job.DownloadPath) || !Directory.Exists(job.DownloadPath))
@@ -193,10 +151,17 @@ namespace TorreClou.S3.Worker.Services
                     Logger.LogInformation("{LogPrefix} File {Index}/{Total} | {FileName} | {SizeMB:F2} MB",
                         LogPrefix, i + 1, filesToUpload.Length, file.Name, file.Length / (1024.0 * 1024.0));
 
-                    var uploadResult = await UploadFileWithResumeAsync(job, file, s3Key, bucketName, s3UploadService, cancellationToken);
-                    if (uploadResult.IsFailure)
+                    try
                     {
-                        await MarkJobFailedAsync(job, $"Upload failed for {file.Name}: {uploadResult.Error.Message}", hasRetries: true);
+                        await UploadFileWithResumeAsync(job, file, s3Key, bucketName, s3UploadService, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        await MarkJobFailedAsync(job, $"Upload failed for {file.Name}: {ex.Message}", hasRetries: true);
                         return;
                     }
 
@@ -207,9 +172,7 @@ namespace TorreClou.S3.Worker.Services
                     var progressNow = DateTime.UtcNow;
                     if ((progressNow - lastProgressUpdate).TotalSeconds >= ProgressUpdateIntervalSeconds)
                     {
-                        job.BytesDownloaded = overallBytesUploaded; // Reuse BytesDownloaded for upload progress
-                        job.LastHeartbeat = progressNow;
-                        await UnitOfWork.Complete();
+                        await _jobService.UpdateJobProgressAsync(job, overallBytesUploaded);
 
                         var percent = totalBytes == 0 ? 0 : (overallBytesUploaded / (double)totalBytes) * 100;
                         Logger.LogInformation("{LogPrefix} Progress: {Percent:F1}% | {Uploaded}/{Total} MB",
@@ -259,6 +222,44 @@ namespace TorreClou.S3.Worker.Services
             }
         }
 
+        private async Task TransitionJobStatusAsync(UserJob job, string bucketName, CancellationToken cancellationToken)
+        {
+            if (job.Status == JobStatus.PENDING_UPLOAD)
+            {
+                Logger.LogInformation("{LogPrefix} Job ready for upload, transitioning to UPLOADING | JobId: {JobId}", LogPrefix, job.Id);
+                job.CurrentState = "Starting S3 upload...";
+                if (job.StartedAt == null) job.StartedAt = DateTime.UtcNow;
+                job.LastHeartbeat = DateTime.UtcNow;
+
+                await JobStatusService.TransitionJobStatusAsync(
+                    job,
+                    JobStatus.UPLOADING,
+                    StatusChangeSource.Worker,
+                    metadata: new { provider = "S3", startedAt = job.StartedAt, bucket = bucketName });
+            }
+            else if (job.Status == JobStatus.UPLOAD_RETRY)
+            {
+                Logger.LogInformation("{LogPrefix} Retrying job | JobId: {JobId} | Retry: {NextRetry}", LogPrefix, job.Id, job.NextRetryAt);
+                job.CurrentState = "Retrying S3 upload...";
+                job.LastHeartbeat = DateTime.UtcNow;
+
+                await JobStatusService.TransitionJobStatusAsync(
+                    job,
+                    JobStatus.UPLOADING,
+                    StatusChangeSource.Worker,
+                    metadata: new { provider = "S3", retrying = true, previousNextRetry = job.NextRetryAt });
+            }
+            else if (job.Status == JobStatus.UPLOADING)
+            {
+                await _jobService.UpdateJobStartedAtAsync(job);
+                Logger.LogInformation("{LogPrefix} Resuming job from recovery | JobId: {JobId}", LogPrefix, job.Id);
+            }
+            else
+            {
+                Logger.LogWarning("{LogPrefix} Unexpected status: {Status} | JobId: {JobId}", LogPrefix, job.Status, job.Id);
+            }
+        }
+
         /// <summary>
         /// Override to abort multipart uploads, clean up distributed lock, then mark failed
         /// </summary>
@@ -269,9 +270,7 @@ namespace TorreClou.S3.Worker.Services
             {
                 try
                 {
-                    var inProgressSpec = new BaseSpecification<S3SyncProgress>(
-                        p => p.JobId == job.Id && p.Status == S3UploadProgressStatus.InProgress);
-                    var inProgressUploads = await UnitOfWork.Repository<S3SyncProgress>().ListAsync(inProgressSpec);
+                    var inProgressUploads = await _s3JobService.GetInProgressUploadsAsync(job.Id);
 
                     foreach (var upload in inProgressUploads)
                     {
@@ -326,18 +325,8 @@ namespace TorreClou.S3.Worker.Services
 
                     // Create a new scope for each heartbeat to get a fresh DbContext
                     using var scope = _serviceScopeFactory.CreateScope();
-                    var scopedUnitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-
-                    var hbSpec = new BaseSpecification<UserJob>(j => j.Id == jobId);
-                    var current = await scopedUnitOfWork.Repository<UserJob>().GetEntityWithSpec(hbSpec);
-
-                    if (current == null) return;
-
-                    // Only heartbeat while actively uploading
-                    if (current.Status != JobStatus.UPLOADING) return;
-
-                    current.LastHeartbeat = DateTime.UtcNow;
-                    await scopedUnitOfWork.Complete();
+                    var scopedJobService = scope.ServiceProvider.GetRequiredService<IJobService>();
+                    await scopedJobService.UpdateHeartbeatAsync(jobId);
 
                     // Refresh the distributed lock to prevent expiration during long uploads
                     if (_distributedLock != null)
@@ -372,207 +361,233 @@ namespace TorreClou.S3.Worker.Services
             }
         }
 
-        private async Task<Result> UploadFileWithResumeAsync(UserJob job, FileInfo file, string s3Key, string bucketName, IS3ResumableUploadService s3UploadService, CancellationToken cancellationToken)
+        private async Task UploadFileWithResumeAsync(
+            UserJob job, FileInfo file, string s3Key, string bucketName,
+            IS3ResumableUploadService s3UploadService, CancellationToken cancellationToken)
         {
             Logger.LogDebug("{LogPrefix} Starting file upload | JobId: {JobId} | File: {FileName} | Size: {SizeMB:F2} MB | Key: {Key}",
                 LogPrefix, job.Id, file.Name, file.Length / (1024.0 * 1024.0), s3Key);
 
+            if (await CheckFileAlreadyUploadedAsync(bucketName, s3Key, s3UploadService, cancellationToken))
+                return;
+
+            var (progress, uploadId, existingParts) = await LoadOrCreateProgressAsync(
+                job, file, s3Key, bucketName, s3UploadService, cancellationToken);
+
+            var allParts = await UploadAllPartsAsync(
+                job, file, s3Key, bucketName, uploadId, progress, existingParts, s3UploadService, cancellationToken);
+
+            // Complete the multipart upload
+            Logger.LogInformation("{LogPrefix} Completing multipart upload | JobId: {JobId} | Key: {Key} | Parts: {PartCount}",
+                LogPrefix, job.Id, s3Key, allParts.Count);
+
+            await s3UploadService.CompleteUploadAsync(bucketName, s3Key, uploadId, allParts, cancellationToken);
+
+            progress.Status = S3UploadProgressStatus.Completed;
+            progress.CompletedAt = DateTime.UtcNow;
+
+            await _s3JobService.DeleteUploadProgressAsync(progress);
+
+            Logger.LogInformation("{LogPrefix} File upload completed | JobId: {JobId} | File: {FileName} | Key: {Key} | Size: {SizeMB:F2} MB",
+                LogPrefix, job.Id, file.Name, s3Key, file.Length / (1024.0 * 1024.0));
+        }
+
+        /// <summary>
+        /// Returns true if the file already exists in S3 and the upload can be skipped.
+        /// </summary>
+        private async Task<bool> CheckFileAlreadyUploadedAsync(
+            string bucketName, string s3Key,
+            IS3ResumableUploadService s3UploadService, CancellationToken cancellationToken)
+        {
+            Logger.LogDebug("{LogPrefix} Checking if file exists in S3 | Key: {Key}", LogPrefix, s3Key);
             try
             {
-                // 1) Check if file already exists in S3
-                Logger.LogDebug("{LogPrefix} Checking if file exists in S3 | Key: {Key}", LogPrefix, s3Key);
-                var existsResult = await s3UploadService.CheckObjectExistsAsync(bucketName, s3Key, cancellationToken);
-                if (existsResult.IsSuccess && existsResult.Value)
+                var exists = await s3UploadService.CheckObjectExistsAsync(bucketName, s3Key, cancellationToken);
+                if (exists)
                 {
                     Logger.LogInformation("{LogPrefix} File already exists in S3, skipping | Key: {Key}", LogPrefix, s3Key);
-                    return Result.Success();
+                    return true;
                 }
-
-                // 2) Load/Create progress record (using S3SyncProgress but with nullable SyncId)
-                Logger.LogDebug("{LogPrefix} Loading existing progress record | JobId: {JobId} | Key: {Key}", LogPrefix, job.Id, s3Key);
-                var existingProgress = await UnitOfWork.Repository<S3SyncProgress>()
-                    .GetEntityWithSpec(new BaseSpecification<S3SyncProgress>(p => p.JobId == job.Id && p.S3Key == s3Key));
-
-                S3SyncProgress? progress = existingProgress;
-                string? uploadId = null;
-                List<PartETag>? existingParts = null;
-
-                // 3) Resume logic
-                if (progress != null && progress.Status == S3UploadProgressStatus.InProgress && !string.IsNullOrEmpty(progress.UploadId))
-                {
-                    uploadId = progress.UploadId;
-                    existingParts = ParsePartETags(progress.PartETags);
-
-                    var listPartsResult = await s3UploadService.ListPartsAsync(bucketName, s3Key, uploadId, cancellationToken);
-                    if (listPartsResult.IsFailure)
-                    {
-                        Logger.LogWarning("{LogPrefix} Remote upload session not found, restarting | Key: {Key}", LogPrefix, s3Key);
-                        uploadId = null;
-                    }
-                    else
-                    {
-                        existingParts = MergePartETags(existingParts, listPartsResult.Value);
-                    }
-                }
-
-                // 4) Init if needed
-                if (string.IsNullOrEmpty(uploadId))
-                {
-                    Logger.LogInformation("{LogPrefix} Initiating new multipart upload | JobId: {JobId} | Key: {Key}", LogPrefix, job.Id, s3Key);
-                    var init = await s3UploadService.InitiateUploadAsync(bucketName, s3Key, file.Length, cancellationToken: cancellationToken);
-                    if (init.IsFailure)
-                    {
-                        Logger.LogError("{LogPrefix} Failed to initiate upload | JobId: {JobId} | Key: {Key} | Error: {Error}",
-                            LogPrefix, job.Id, s3Key, init.Error.Message);
-                        return Result.Failure(init.Error);
-                    }
-
-                    uploadId = init.Value;
-                    var totalParts = (int)Math.Ceiling((double)file.Length / PartSize);
-                    Logger.LogInformation("{LogPrefix} Multipart upload initiated | JobId: {JobId} | Key: {Key} | UploadId: {UploadId} | TotalParts: {TotalParts}",
-                        LogPrefix, job.Id, s3Key, uploadId, totalParts);
-
-                    progress = new S3SyncProgress
-                    {
-                        JobId = job.Id,
-                        LocalFilePath = file.FullName,
-                        S3Key = s3Key,
-                        UploadId = uploadId,
-                        PartSize = PartSize,
-                        TotalParts = totalParts,
-                        Status = S3UploadProgressStatus.InProgress,
-                        StartedAt = DateTime.UtcNow,
-                        TotalBytes = file.Length
-                    };
-
-                    UnitOfWork.Repository<S3SyncProgress>().Add(progress);
-                    await UnitOfWork.Complete();
-
-                    existingParts = [];
-                }
-                else
-                {
-                    progress!.UpdatedAt = DateTime.UtcNow;
-                    await UnitOfWork.Complete();
-                    existingParts ??= [];
-                }
-
-                // 5) Upload loop (memory optimized)
-                Logger.LogInformation("{LogPrefix} Starting part upload loop | JobId: {JobId} | File: {FileName} | TotalParts: {TotalParts}",
-                    LogPrefix, job.Id, file.Name, progress.TotalParts);
-
-                await using var fileStream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read);
-
-                var startPartNumber = existingParts.Count > 0
-                    ? existingParts.Max(p => p.PartNumber) + 1
-                    : 1;
-
-                Logger.LogInformation("{LogPrefix} Resuming from part {StartPart} | JobId: {JobId} | ExistingParts: {ExistingParts}",
-                    LogPrefix, startPartNumber, job.Id, existingParts.Count);
-
-                var buffer = ArrayPool<byte>.Shared.Rent((int)PartSize);
-                var lastPartLogTime = DateTime.UtcNow;
-                const int PartLogIntervalSeconds = 30;
-
-                try
-                {
-                    for (int partNumber = startPartNumber; partNumber <= progress.TotalParts; partNumber++)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-
-                        var partStart = (partNumber - 1) * PartSize;
-                        var currentPartSize = (int)Math.Min(PartSize, file.Length - partStart);
-
-                        Logger.LogDebug("{LogPrefix} Reading part {PartNumber}/{TotalParts} | JobId: {JobId} | Offset: {Offset} | Size: {Size}",
-                            LogPrefix, partNumber, progress.TotalParts, job.Id, partStart, currentPartSize);
-
-                        fileStream.Seek(partStart, SeekOrigin.Begin);
-                        var bytesRead = await fileStream.ReadAsync(buffer, 0, currentPartSize, cancellationToken);
-
-                        if (bytesRead != currentPartSize)
-                        {
-                            Logger.LogError("{LogPrefix} Read mismatch | JobId: {JobId} | Part: {Part} | Expected: {Expected} | Actual: {Actual}",
-                                LogPrefix, job.Id, partNumber, currentPartSize, bytesRead);
-                            return Result.Failure(ErrorCode.ReadError, $"Read mismatch part {partNumber}");
-                        }
-
-                        using var partStream = new MemoryStream(buffer, 0, bytesRead);
-
-                        Logger.LogDebug("{LogPrefix} Uploading part {PartNumber}/{TotalParts} | JobId: {JobId}",
-                            LogPrefix, partNumber, progress.TotalParts, job.Id);
-
-                        var uploadPart = await s3UploadService.UploadPartAsync(
-                            bucketName, s3Key, uploadId, partNumber, partStream, cancellationToken);
-
-                        if (uploadPart.IsFailure)
-                        {
-                            Logger.LogError("{LogPrefix} Part upload failed | JobId: {JobId} | Part: {Part} | Error: {Error}",
-                                LogPrefix, job.Id, partNumber, uploadPart.Error.Message);
-                            return Result.Failure(uploadPart.Error);
-                        }
-
-                        existingParts.Add(uploadPart.Value);
-
-                        progress.PartsCompleted = existingParts.Count;
-                        progress.BytesUploaded = Math.Min(progress.PartsCompleted * PartSize, file.Length);
-                        progress.PartETags = SerializePartETags(existingParts);
-                        progress.UpdatedAt = DateTime.UtcNow;
-
-                        await UnitOfWork.Complete();
-
-                        // Log progress periodically (every 30 seconds or first/last part)
-                        var now = DateTime.UtcNow;
-                        if (partNumber == 1 || partNumber == progress.TotalParts || (now - lastPartLogTime).TotalSeconds >= PartLogIntervalSeconds)
-                        {
-                            var percentComplete = (double)partNumber / progress.TotalParts * 100;
-                            var uploadedMB = progress.BytesUploaded / (1024.0 * 1024.0);
-                            var totalMB = file.Length / (1024.0 * 1024.0);
-                            Logger.LogInformation("{LogPrefix} Part progress | JobId: {JobId} | File: {FileName} | Part: {Part}/{Total} ({Percent:F1}%) | {UploadedMB:F1}/{TotalMB:F1} MB",
-                                LogPrefix, job.Id, file.Name, partNumber, progress.TotalParts, percentComplete, uploadedMB, totalMB);
-                            lastPartLogTime = now;
-                        }
-                    }
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(buffer);
-                }
-
-                // 6) Complete
-                Logger.LogInformation("{LogPrefix} Completing multipart upload | JobId: {JobId} | Key: {Key} | Parts: {PartCount}",
-                    LogPrefix, job.Id, s3Key, existingParts.Count);
-
-                var comp = await s3UploadService.CompleteUploadAsync(bucketName, s3Key, uploadId, existingParts, cancellationToken);
-                if (comp.IsFailure)
-                {
-                    Logger.LogError("{LogPrefix} Failed to complete multipart upload | JobId: {JobId} | Key: {Key} | Error: {Error}",
-                        LogPrefix, job.Id, s3Key, comp.Error.Message);
-                    return Result.Failure(comp.Error);
-                }
-
-                progress.Status = S3UploadProgressStatus.Completed;
-                progress.CompletedAt = DateTime.UtcNow;
-
-                UnitOfWork.Repository<S3SyncProgress>().Delete(progress);
-                await UnitOfWork.Complete();
-
-                Logger.LogInformation("{LogPrefix} File upload completed | JobId: {JobId} | File: {FileName} | Key: {Key} | Size: {SizeMB:F2} MB",
-                    LogPrefix, job.Id, file.Name, s3Key, file.Length / (1024.0 * 1024.0));
-
-                return Result.Success();
-            }
-            catch (OperationCanceledException)
-            {
-                Logger.LogWarning("{LogPrefix} Upload cancelled | JobId: {JobId} | File: {FileName} | Key: {Key}",
-                    LogPrefix, job.Id, file.Name, s3Key);
-                throw; // Re-throw cancellation to propagate up
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "{LogPrefix} Upload error | JobId: {JobId} | File: {FileName} | Key: {Key} | Error: {Error}",
-                    LogPrefix, job.Id, file.Name, s3Key, ex.Message);
-                return Result.Failure(ErrorCode.UploadError, ex.Message);
+                Logger.LogWarning(ex, "{LogPrefix} CheckObjectExists failed for {Key}, proceeding with upload", LogPrefix, s3Key);
             }
+            return false;
+        }
+
+        /// <summary>
+        /// Loads an existing progress record or creates a new multipart upload.
+        /// Handles resume logic (merging already-uploaded parts from S3).
+        /// </summary>
+        private async Task<(S3SyncProgress progress, string uploadId, List<PartETag> existingParts)> LoadOrCreateProgressAsync(
+            UserJob job, FileInfo file, string s3Key, string bucketName,
+            IS3ResumableUploadService s3UploadService, CancellationToken cancellationToken)
+        {
+            Logger.LogDebug("{LogPrefix} Loading existing progress record | JobId: {JobId} | Key: {Key}", LogPrefix, job.Id, s3Key);
+            var existingProgress = await _s3JobService.GetUploadProgressAsync(job.Id, s3Key);
+
+            S3SyncProgress? progress = existingProgress;
+            string? uploadId = null;
+            List<PartETag>? existingParts = null;
+
+            // Resume logic
+            if (progress != null && progress.Status == S3UploadProgressStatus.InProgress && !string.IsNullOrEmpty(progress.UploadId))
+            {
+                uploadId = progress.UploadId;
+                existingParts = ParsePartETags(progress.PartETags);
+
+                try
+                {
+                    var s3Parts = await s3UploadService.ListPartsAsync(bucketName, s3Key, uploadId, cancellationToken);
+                    existingParts = MergePartETags(existingParts, s3Parts);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "{LogPrefix} Remote upload session not found, restarting | Key: {Key}", LogPrefix, s3Key);
+                    uploadId = null;
+                }
+            }
+
+            // Init new upload if needed
+            if (string.IsNullOrEmpty(uploadId))
+            {
+                if (existingProgress != null)
+                {
+                    try
+                    {
+                        await _s3JobService.DeleteUploadProgressAsync(existingProgress);
+                        Logger.LogInformation("{LogPrefix} Deleted stale progress record | JobId: {JobId} | Key: {Key}", LogPrefix, job.Id, s3Key);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning(ex, "{LogPrefix} Failed to delete stale progress, proceeding anyway | Key: {Key}", LogPrefix, s3Key);
+                    }
+                    progress = null;
+                }
+
+                Logger.LogInformation("{LogPrefix} Initiating new multipart upload | JobId: {JobId} | Key: {Key}", LogPrefix, job.Id, s3Key);
+                uploadId = await s3UploadService.InitiateUploadAsync(bucketName, s3Key, file.Length, cancellationToken: cancellationToken);
+
+                var totalParts = (int)Math.Ceiling((double)file.Length / PartSize);
+                Logger.LogInformation("{LogPrefix} Multipart upload initiated | JobId: {JobId} | Key: {Key} | UploadId: {UploadId} | TotalParts: {TotalParts}",
+                    LogPrefix, job.Id, s3Key, uploadId, totalParts);
+
+                progress = new S3SyncProgress
+                {
+                    JobId = job.Id,
+                    LocalFilePath = file.FullName,
+                    S3Key = s3Key,
+                    UploadId = uploadId,
+                    PartSize = PartSize,
+                    TotalParts = totalParts,
+                    Status = S3UploadProgressStatus.InProgress,
+                    StartedAt = DateTime.UtcNow,
+                    TotalBytes = file.Length
+                };
+
+                await _s3JobService.CreateUploadProgressAsync(progress);
+                existingParts = [];
+            }
+            else
+            {
+                progress!.UpdatedAt = DateTime.UtcNow;
+                await _s3JobService.SaveUploadProgressAsync(progress);
+                existingParts ??= [];
+            }
+
+            return (progress, uploadId, existingParts);
+        }
+
+        /// <summary>
+        /// Uploads all remaining parts of a file using the multipart upload protocol.
+        /// Resumes from the last completed part and persists progress after each part.
+        /// </summary>
+        private async Task<List<PartETag>> UploadAllPartsAsync(
+            UserJob job, FileInfo file, string s3Key, string bucketName, string uploadId,
+            S3SyncProgress progress, List<PartETag> existingParts,
+            IS3ResumableUploadService s3UploadService, CancellationToken cancellationToken)
+        {
+            Logger.LogInformation("{LogPrefix} Starting part upload loop | JobId: {JobId} | File: {FileName} | TotalParts: {TotalParts}",
+                LogPrefix, job.Id, file.Name, progress.TotalParts);
+
+            await using var fileStream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+            var uploadedPartNumbers = new HashSet<int>(existingParts.Select(p => p.PartNumber));
+
+            Logger.LogInformation("{LogPrefix} Starting upload loop | JobId: {JobId} | TotalParts: {TotalParts} | AlreadyUploaded: {AlreadyUploaded}",
+                LogPrefix, job.Id, progress.TotalParts, uploadedPartNumbers.Count);
+
+            var buffer = ArrayPool<byte>.Shared.Rent((int)PartSize);
+            var lastPartLogTime = DateTime.UtcNow;
+            const int PartLogIntervalSeconds = 30;
+
+            try
+            {
+                for (int partNumber = 1; partNumber <= progress.TotalParts; partNumber++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (uploadedPartNumbers.Contains(partNumber))
+                    {
+                        Logger.LogDebug("{LogPrefix} Skipping already-uploaded part {PartNumber} | JobId: {JobId}",
+                            LogPrefix, partNumber, job.Id);
+                        continue;
+                    }
+
+                    var partStart = (partNumber - 1) * PartSize;
+                    var currentPartSize = (int)Math.Min(PartSize, file.Length - partStart);
+
+                    Logger.LogDebug("{LogPrefix} Reading part {PartNumber}/{TotalParts} | JobId: {JobId} | Offset: {Offset} | Size: {Size}",
+                        LogPrefix, partNumber, progress.TotalParts, job.Id, partStart, currentPartSize);
+
+                    fileStream.Seek(partStart, SeekOrigin.Begin);
+                    var bytesRead = await fileStream.ReadAsync(buffer, 0, currentPartSize, cancellationToken);
+
+                    if (bytesRead != currentPartSize)
+                    {
+                        Logger.LogError("{LogPrefix} Read mismatch | JobId: {JobId} | Part: {Part} | Expected: {Expected} | Actual: {Actual}",
+                            LogPrefix, job.Id, partNumber, currentPartSize, bytesRead);
+                        throw new ExternalServiceException("ReadError", $"Read mismatch part {partNumber}: expected {currentPartSize} bytes, got {bytesRead}");
+                    }
+
+                    using var partStream = new MemoryStream(buffer, 0, bytesRead);
+
+                    Logger.LogDebug("{LogPrefix} Uploading part {PartNumber}/{TotalParts} | JobId: {JobId}",
+                        LogPrefix, partNumber, progress.TotalParts, job.Id);
+
+                    var partETag = await s3UploadService.UploadPartAsync(
+                        bucketName, s3Key, uploadId, partNumber, partStream, cancellationToken);
+
+                    existingParts.Add(partETag);
+
+                    progress.PartsCompleted = existingParts.Count;
+                    progress.BytesUploaded = Math.Min(progress.PartsCompleted * PartSize, file.Length);
+                    progress.PartETags = SerializePartETags(existingParts);
+                    progress.UpdatedAt = DateTime.UtcNow;
+
+                    await _s3JobService.SaveUploadProgressAsync(progress);
+
+                    // Log progress periodically (every 30 seconds or first/last part)
+                    var now = DateTime.UtcNow;
+                    if (partNumber == 1 || partNumber == progress.TotalParts || (now - lastPartLogTime).TotalSeconds >= PartLogIntervalSeconds)
+                    {
+                        var percentComplete = (double)partNumber / progress.TotalParts * 100;
+                        var uploadedMB = progress.BytesUploaded / (1024.0 * 1024.0);
+                        var totalMB = file.Length / (1024.0 * 1024.0);
+                        Logger.LogInformation("{LogPrefix} Part progress | JobId: {JobId} | File: {FileName} | Part: {Part}/{Total} ({Percent:F1}%) | {UploadedMB:F1}/{TotalMB:F1} MB",
+                            LogPrefix, job.Id, file.Name, partNumber, progress.TotalParts, percentComplete, uploadedMB, totalMB);
+                        lastPartLogTime = now;
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+
+            existingParts.Sort((a, b) => a.PartNumber.CompareTo(b.PartNumber));
+            return existingParts;
         }
 
         // Helpers

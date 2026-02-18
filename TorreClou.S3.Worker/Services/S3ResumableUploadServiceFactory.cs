@@ -8,19 +8,13 @@ namespace TorreClou.S3.Worker.Services
     /// <summary>
     /// Factory for creating S3ResumableUploadService instances with user-specific S3 clients
     /// </summary>
-    public class S3ResumableUploadServiceFactory : IS3ResumableUploadServiceFactory
+    public class S3ResumableUploadServiceFactory(ILoggerFactory loggerFactory) : IS3ResumableUploadServiceFactory
     {
-        private readonly ILoggerFactory _loggerFactory;
-
-        public S3ResumableUploadServiceFactory(ILoggerFactory loggerFactory)
-        {
-            _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
-        }
+        private readonly ILoggerFactory _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
 
         public IS3ResumableUploadService Create(IAmazonS3 s3Client)
         {
-            if (s3Client == null)
-                throw new ArgumentNullException(nameof(s3Client));
+            ArgumentNullException.ThrowIfNull(s3Client);
 
             var logger = _loggerFactory.CreateLogger<S3ResumableUploadService>();
             return new S3ResumableUploadService(s3Client, logger);

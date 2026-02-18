@@ -1,65 +1,47 @@
 using Amazon.S3;
 using Amazon.S3.Model;
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using TorreClou.Core.DTOs.Storage.S3;
 using TorreClou.Core.Entities.Jobs;
 using TorreClou.Core.Enums;
+using TorreClou.Core.Exceptions;
 using TorreClou.Core.Interfaces;
-using TorreClou.Core.Shared;
-using Microsoft.Extensions.Logging;
+using TorreClou.Core.Specifications;
 
 namespace TorreClou.S3.Worker.Services
 {
     /// <summary>
-    /// Service for S3-specific job operations including credential verification and lock management.
-    /// Implements NO FALLBACK policy - all credentials must come from UserStorageProfile.CredentialsJson.
+    /// Service for S3-specific job operations including credential verification, lock management, and upload progress tracking.
     /// </summary>
-    public class S3JobService : IS3JobService
+    public class S3JobService(
+        IRedisLockService redisLockService,
+        IUnitOfWork unitOfWork,
+        ILogger<S3JobService> logger) : IS3JobService
     {
-        private readonly IRedisLockService _redisLockService;
-        private readonly ILogger<S3JobService> _logger;
-
-        public S3JobService(
-            IRedisLockService redisLockService,
-            ILogger<S3JobService> logger)
-        {
-            _redisLockService = redisLockService;
-            _logger = logger;
-        }
-
-        /// <inheritdoc/>
-        public async Task<Result<(string AccessKey, string SecretKey, string Endpoint, string BucketName)>>
+        public async Task<(string AccessKey, string SecretKey, string Endpoint, string BucketName)>
             VerifyAndGetCredentialsAsync(UserStorageProfile profile, CancellationToken cancellationToken = default)
         {
             const string logPrefix = "[S3_JOB_SERVICE]";
 
-            // 1. Validate profile exists and is active
             if (profile == null)
             {
-                _logger.LogError("{LogPrefix} UserStorageProfile is null", logPrefix);
-                return Result<(string, string, string, string)>.Failure(
-                    ErrorCode.InvalidProfile,
-                    "Storage profile does not exist");
+                logger.LogError("{LogPrefix} UserStorageProfile is null", logPrefix);
+                throw new ValidationException("InvalidProfile", "Storage profile does not exist");
             }
 
             if (!profile.IsActive)
             {
-                _logger.LogWarning("{LogPrefix} Profile {ProfileId} is inactive", logPrefix, profile.Id);
-                return Result<(string, string, string, string)>.Failure(
-                    ErrorCode.InactiveProfile,
-                    "Storage profile is not active");
+                logger.LogWarning("{LogPrefix} Profile {ProfileId} is inactive", logPrefix, profile.Id);
+                throw new BusinessRuleException("InactiveProfile", "Storage profile is not active");
             }
 
-            // 2. Check if CredentialsJson exists
             if (string.IsNullOrWhiteSpace(profile.CredentialsJson))
             {
-                _logger.LogError("{LogPrefix} Profile {ProfileId} has no credentials", logPrefix, profile.Id);
-                return Result<(string, string, string, string)>.Failure(
-                    ErrorCode.NoCredentials,
-                    "User has not configured S3 credentials in their storage profile");
+                logger.LogError("{LogPrefix} Profile {ProfileId} has no credentials", logPrefix, profile.Id);
+                throw new BusinessRuleException("NoCredentials", "User has not configured S3 credentials in their storage profile");
             }
 
-            // 3. Parse CredentialsJson
             S3Credentials? credentials;
             try
             {
@@ -67,70 +49,38 @@ namespace TorreClou.S3.Worker.Services
             }
             catch (JsonException ex)
             {
-                _logger.LogError(ex, "{LogPrefix} Failed to parse CredentialsJson for Profile {ProfileId}",
-                    logPrefix, profile.Id);
-                return Result<(string, string, string, string)>.Failure(
-                    ErrorCode.InvalidCredentialsJson,
-                    "Credentials JSON is malformed or corrupted");
+                logger.LogError(ex, "{LogPrefix} Failed to parse CredentialsJson for Profile {ProfileId}", logPrefix, profile.Id);
+                throw new ValidationException("InvalidCredentialsJson", "Credentials JSON is malformed or corrupted");
             }
 
             if (credentials == null)
             {
-                _logger.LogError("{LogPrefix} Deserialized credentials are null for Profile {ProfileId}",
-                    logPrefix, profile.Id);
-                return Result<(string, string, string, string)>.Failure(
-                    ErrorCode.InvalidCredentialsJson,
-                    "Credentials JSON is malformed or corrupted");
+                logger.LogError("{LogPrefix} Deserialized credentials are null for Profile {ProfileId}", logPrefix, profile.Id);
+                throw new ValidationException("InvalidCredentialsJson", "Credentials JSON is malformed or corrupted");
             }
 
-            // 4. Validate required fields
             var missingFields = new List<string>();
             if (string.IsNullOrWhiteSpace(credentials.AccessKey)) missingFields.Add("AccessKey");
             if (string.IsNullOrWhiteSpace(credentials.SecretKey)) missingFields.Add("SecretKey");
             if (string.IsNullOrWhiteSpace(credentials.Endpoint)) missingFields.Add("Endpoint");
             if (string.IsNullOrWhiteSpace(credentials.BucketName)) missingFields.Add("BucketName");
 
-            if (missingFields.Any())
+            if (missingFields.Count != 0)
             {
-                _logger.LogError("{LogPrefix} Profile {ProfileId} missing required fields: {Fields}",
-                    logPrefix, profile.Id, string.Join(", ", missingFields));
-                return Result<(string, string, string, string)>.Failure(
-                    ErrorCode.MissingRequiredFields,
-                    $"Required credentials fields missing: {string.Join(", ", missingFields)}");
+                logger.LogError("{LogPrefix} Profile {ProfileId} missing required fields: {Fields}", logPrefix, profile.Id, string.Join(", ", missingFields));
+                throw new ValidationException("MissingRequiredFields", $"Required credentials fields missing: {string.Join(", ", missingFields)}");
             }
 
-            // 5. Test bucket access
-            _logger.LogInformation("{LogPrefix} Testing bucket access | Profile: {ProfileId} | Bucket: {Bucket}",
-                logPrefix, profile.Id, credentials.BucketName);
+            logger.LogInformation("{LogPrefix} Testing bucket access | Profile: {ProfileId} | Bucket: {Bucket}", logPrefix, profile.Id, credentials.BucketName);
 
-            var accessTestResult = await TestBucketAccessAsync(
-                credentials.Endpoint,
-                credentials.AccessKey,
-                credentials.SecretKey,
-                credentials.BucketName,
-                cancellationToken);
+            await TestBucketAccessAsync(credentials.Endpoint, credentials.AccessKey, credentials.SecretKey, credentials.BucketName, cancellationToken);
 
-            if (accessTestResult.IsFailure)
-            {
-                _logger.LogError("{LogPrefix} Bucket access test failed | Profile: {ProfileId} | Error: {Error}",
-                    logPrefix, profile.Id, accessTestResult.Error.Message);
-                return Result<(string, string, string, string)>.Failure(
-                    ErrorCode.BucketAccessDenied,
-                    $"Cannot access S3 bucket with provided credentials: {accessTestResult.Error.Message}");
-            }
+            logger.LogInformation("{LogPrefix} Credentials verified successfully | Profile: {ProfileId}", logPrefix, profile.Id);
 
-            _logger.LogInformation("{LogPrefix} Credentials verified successfully | Profile: {ProfileId}",
-                logPrefix, profile.Id);
-
-            return Result.Success((
-                credentials.AccessKey,
-                credentials.SecretKey,
-                credentials.Endpoint,
-                credentials.BucketName));
+            return (credentials.AccessKey, credentials.SecretKey, credentials.Endpoint, credentials.BucketName);
         }
 
-        /// <inheritdoc/>
-        public async Task<Result<bool>> TestBucketAccessAsync(
+        public async Task TestBucketAccessAsync(
             string endpoint,
             string accessKey,
             string secretKey,
@@ -139,20 +89,18 @@ namespace TorreClou.S3.Worker.Services
         {
             const string logPrefix = "[S3_JOB_SERVICE]";
 
+            var config = new AmazonS3Config
+            {
+                ServiceURL = endpoint,
+                ForcePathStyle = true,
+                Timeout = TimeSpan.FromSeconds(10),
+                MaxErrorRetry = 1
+            };
+
+            using var s3Client = new AmazonS3Client(accessKey, secretKey, config);
+
             try
             {
-                // Create temporary S3 client with user credentials
-                var config = new AmazonS3Config
-                {
-                    ServiceURL = endpoint,
-                    ForcePathStyle = true, // Required for S3-compatible services like Backblaze B2
-                    Timeout = TimeSpan.FromSeconds(10),
-                    MaxErrorRetry = 1
-                };
-
-                using var s3Client = new AmazonS3Client(accessKey, secretKey, config);
-
-                // Test bucket access by listing objects (MaxKeys=1 for minimal overhead)
                 var listRequest = new ListObjectsV2Request
                 {
                     BucketName = bucketName,
@@ -161,46 +109,26 @@ namespace TorreClou.S3.Worker.Services
 
                 var response = await s3Client.ListObjectsV2Async(listRequest, cancellationToken);
 
-                _logger.LogDebug("{LogPrefix} Bucket access test successful | Bucket: {Bucket} | Objects: {Count}",
+                logger.LogDebug("{LogPrefix} Bucket access test successful | Bucket: {Bucket} | Objects: {Count}",
                     logPrefix, bucketName, response.KeyCount);
-
-                return Result.Success(true);
             }
             catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.Forbidden)
             {
-                _logger.LogWarning("{LogPrefix} Bucket access denied | Bucket: {Bucket} | StatusCode: {Status}",
-                    logPrefix, bucketName, ex.StatusCode);
-                return Result<bool>.Failure(
-                    ErrorCode.AccessDenied,
-                    $"Access denied to bucket '{bucketName}'. Check credentials and bucket permissions.");
+                logger.LogWarning("{LogPrefix} Bucket access denied | Bucket: {Bucket} | StatusCode: {Status}", logPrefix, bucketName, ex.StatusCode);
+                throw new ForbiddenException("AccessDenied", $"Access denied to bucket '{bucketName}'. Check credentials and bucket permissions.");
             }
             catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
-                _logger.LogWarning("{LogPrefix} Bucket not found | Bucket: {Bucket}",
-                    logPrefix, bucketName);
-                return Result<bool>.Failure(
-                    ErrorCode.BucketNotFound,
-                    $"Bucket '{bucketName}' does not exist or is not accessible.");
+                logger.LogWarning("{LogPrefix} Bucket not found | Bucket: {Bucket}", logPrefix, bucketName);
+                throw new NotFoundException("BucketNotFound", $"Bucket '{bucketName}' does not exist or is not accessible.");
             }
             catch (AmazonS3Exception ex)
             {
-                _logger.LogError(ex, "{LogPrefix} S3 error testing bucket access | Bucket: {Bucket} | StatusCode: {Status}",
-                    logPrefix, bucketName, ex.StatusCode);
-                return Result<bool>.Failure(
-                    ErrorCode.S3Error,
-                    $"S3 error: {ex.Message}");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "{LogPrefix} Unexpected error testing bucket access | Bucket: {Bucket}",
-                    logPrefix, bucketName);
-                return Result<bool>.Failure(
-                    ErrorCode.UnexpectedError,
-                    $"Unexpected error testing bucket access: {ex.Message}");
+                logger.LogError(ex, "{LogPrefix} S3 error testing bucket access | Bucket: {Bucket} | StatusCode: {Status}", logPrefix, bucketName, ex.StatusCode);
+                throw new ExternalServiceException("S3Error", $"S3 error: {ex.Message}");
             }
         }
 
-        /// <inheritdoc/>
         public async Task<bool> DeleteUploadLockAsync(int jobId)
         {
             const string logPrefix = "[S3_JOB_SERVICE]";
@@ -208,25 +136,49 @@ namespace TorreClou.S3.Worker.Services
 
             try
             {
-                var deleted = await _redisLockService.DeleteLockAsync(lockKey);
+                var deleted = await redisLockService.DeleteLockAsync(lockKey);
                 if (deleted)
-                {
-                    _logger.LogInformation("{LogPrefix} Deleted upload lock | JobId: {JobId} | Key: {Key}",
-                        logPrefix, jobId, lockKey);
-                }
+                    logger.LogInformation("{LogPrefix} Deleted upload lock | JobId: {JobId} | Key: {Key}", logPrefix, jobId, lockKey);
                 else
-                {
-                    _logger.LogDebug("{LogPrefix} Lock did not exist | JobId: {JobId} | Key: {Key}",
-                        logPrefix, jobId, lockKey);
-                }
+                    logger.LogDebug("{LogPrefix} Lock did not exist | JobId: {JobId} | Key: {Key}", logPrefix, jobId, lockKey);
                 return deleted;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "{LogPrefix} Error deleting upload lock | JobId: {JobId} | Key: {Key}",
-                    logPrefix, jobId, lockKey);
+                logger.LogError(ex, "{LogPrefix} Error deleting upload lock | JobId: {JobId} | Key: {Key}", logPrefix, jobId, lockKey);
                 return false;
             }
+        }
+
+        public async Task<IReadOnlyList<S3SyncProgress>> GetInProgressUploadsAsync(int jobId)
+        {
+            var spec = new BaseSpecification<S3SyncProgress>(
+                p => p.JobId == jobId && p.Status == S3UploadProgressStatus.InProgress);
+            return await unitOfWork.Repository<S3SyncProgress>().ListAsync(spec);
+        }
+
+        public async Task<S3SyncProgress?> GetUploadProgressAsync(int jobId, string s3Key)
+        {
+            var spec = new BaseSpecification<S3SyncProgress>(
+                p => p.JobId == jobId && p.S3Key == s3Key);
+            return await unitOfWork.Repository<S3SyncProgress>().GetEntityWithSpec(spec);
+        }
+
+        public async Task CreateUploadProgressAsync(S3SyncProgress progress)
+        {
+            unitOfWork.Repository<S3SyncProgress>().Add(progress);
+            await unitOfWork.Complete();
+        }
+
+        public async Task SaveUploadProgressAsync(S3SyncProgress progress)
+        {
+            await unitOfWork.Complete();
+        }
+
+        public async Task DeleteUploadProgressAsync(S3SyncProgress progress)
+        {
+            unitOfWork.Repository<S3SyncProgress>().Delete(progress);
+            await unitOfWork.Complete();
         }
     }
 }

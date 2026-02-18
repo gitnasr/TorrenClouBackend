@@ -1,10 +1,9 @@
-﻿using TorreClou.Core.DTOs.Auth;
-using TorreClou.Core.Shared;
+using TorreClou.Core.DTOs.Auth;
 
 namespace TorreClou.Core.Interfaces
 {
     public interface IAuthService
     {
-        Task<Result<AuthResponseDto>> LoginAsync(string email, string password);
+        Task<AuthResponseDto> LoginAsync(string email, string password);
     }
 }

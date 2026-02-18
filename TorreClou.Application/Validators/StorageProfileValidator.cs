@@ -1,56 +1,37 @@
 using System.Text.RegularExpressions;
-using TorreClou.Core.Enums;
-using TorreClou.Core.Shared;
+using TorreClou.Core.Exceptions;
 
 namespace TorreClou.Application.Validators
 {
     public static partial class StorageProfileValidator
     {
-        public static Result ValidateProfileName(string? profileName)
+        public static void ValidateProfileName(string? profileName)
         {
             if (string.IsNullOrWhiteSpace(profileName))
-            {
-                return Result.Failure(ErrorCode.InvalidProfileName, "Profile name cannot be empty");
-            }
+                throw new ValidationException("InvalidProfileName", "Profile name cannot be empty");
 
             var trimmed = profileName.Trim();
 
             if (trimmed.Length < 3)
-            {
-                return Result.Failure(ErrorCode.ProfileNameTooShort, "Profile name must be at least 3 characters");
-            }
+                throw new ValidationException("ProfileNameTooShort", "Profile name must be at least 3 characters");
 
             if (trimmed.Length > 50)
-            {
-                return Result.Failure(ErrorCode.ProfileNameTooLong, "Profile name must be at most 50 characters");
-            }
+                throw new ValidationException("ProfileNameTooLong", "Profile name must be at most 50 characters");
 
             if (!AllowedProfileNamePattern().IsMatch(trimmed))
-            {
-                return Result.Failure(ErrorCode.InvalidProfileName, "Profile name can only contain letters, numbers, spaces, hyphens, and underscores");
-            }
-
-            return Result.Success();
+                throw new ValidationException("InvalidProfileName", "Profile name can only contain letters, numbers, spaces, hyphens, and underscores");
         }
 
-        public static Result ValidateGoogleDriveCredentials(string? clientId, string? clientSecret, string? redirectUri)
+        public static void ValidateGoogleDriveCredentials(string? clientId, string? clientSecret, string? redirectUri)
         {
-            if (string.IsNullOrEmpty(clientId) || !clientId.Contains(".apps.googleusercontent.com"))
-            {
-                return Result.Failure(ErrorCode.InvalidClientId, "Invalid Google Client ID format. It should end with .apps.googleusercontent.com");
-            }
+            if (string.IsNullOrEmpty(clientId) || !clientId.EndsWith(".apps.googleusercontent.com", StringComparison.OrdinalIgnoreCase))
+                throw new ValidationException("InvalidClientId", "Invalid Google Client ID format. It should end with .apps.googleusercontent.com");
 
-            if (string.IsNullOrEmpty(clientSecret))
-            {
-                return Result.Failure(ErrorCode.InvalidClientSecret, "Client Secret is required");
-            }
+            if (string.IsNullOrWhiteSpace(clientSecret))
+                throw new ValidationException("InvalidClientSecret", "Client Secret is required");
 
-            if (string.IsNullOrEmpty(redirectUri))
-            {
-                return Result.Failure(ErrorCode.InvalidRedirectUri, "Redirect URI is required");
-            }
-
-            return Result.Success();
+            if (string.IsNullOrWhiteSpace(redirectUri))
+                throw new ValidationException("InvalidRedirectUri", "Redirect URI is required");
         }
 
         [GeneratedRegex(@"^[a-zA-Z0-9\s\-_]+$")]

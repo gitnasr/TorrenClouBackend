@@ -7,21 +7,14 @@ namespace TorreClou.Infrastructure.Services.Handlers
     /// Factory for resolving job handlers based on provider type and job type.
     /// Uses dependency injection to retrieve registered handlers.
     /// </summary>
-    public class JobHandlerFactory : IJobHandlerFactory
+    public class JobHandlerFactory(
+        IEnumerable<IStorageProviderHandler> storageProviderHandlers,
+        IEnumerable<IJobTypeHandler> jobTypeHandlers,
+        IEnumerable<IJobCancellationHandler> cancellationHandlers) : IJobHandlerFactory
     {
-        private readonly Dictionary<StorageProviderType, IStorageProviderHandler> _storageProviderHandlers;
-        private readonly Dictionary<JobType, IJobTypeHandler> _jobTypeHandlers;
-        private readonly Dictionary<JobType, IJobCancellationHandler> _cancellationHandlers;
-
-        public JobHandlerFactory(
-            IEnumerable<IStorageProviderHandler> storageProviderHandlers,
-            IEnumerable<IJobTypeHandler> jobTypeHandlers,
-            IEnumerable<IJobCancellationHandler> cancellationHandlers)
-        {
-            _storageProviderHandlers = storageProviderHandlers.ToDictionary(h => h.ProviderType);
-            _jobTypeHandlers = jobTypeHandlers.ToDictionary(h => h.JobType);
-            _cancellationHandlers = cancellationHandlers.ToDictionary(h => h.JobType);
-        }
+        private readonly Dictionary<StorageProviderType, IStorageProviderHandler> _storageProviderHandlers = storageProviderHandlers.ToDictionary(h => h.ProviderType);
+        private readonly Dictionary<JobType, IJobTypeHandler> _jobTypeHandlers = jobTypeHandlers.ToDictionary(h => h.JobType);
+        private readonly Dictionary<JobType, IJobCancellationHandler> _cancellationHandlers = cancellationHandlers.ToDictionary(h => h.JobType);
 
         public IStorageProviderHandler? GetStorageProviderHandler(StorageProviderType providerType)
         {

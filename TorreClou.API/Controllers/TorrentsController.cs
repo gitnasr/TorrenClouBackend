@@ -18,11 +18,8 @@ namespace TorreClou.API.Controllers
         public async Task<IActionResult> AnalyzeTorrent([FromForm] AnalyzeTorrentRequestDto request)
         {
             using var stream = request.TorrentFile.OpenReadStream();
-
             var result = await analysisService.AnalyzeTorrentAsync(request, UserId, stream);
-
-            return HandleResult(result);
+            return Ok(result);
         }
     }
-
 }

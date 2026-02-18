@@ -5,19 +5,9 @@ using TorreClou.Core.Enums;
 
 namespace TorreClou.Core.Interfaces
 {
-    /// <summary>
-    /// Service for managing job status transitions with full audit trail.
-    /// </summary>
+
     public interface IJobStatusService
     {
-        /// <summary>
-        /// Transitions a UserJob to a new status and records the change in history.
-        /// </summary>
-        /// <param name="job">The job entity to transition (must be tracked by the DbContext).</param>
-        /// <param name="newStatus">The new status to transition to.</param>
-        /// <param name="source">The source triggering this status change.</param>
-        /// <param name="errorMessage">Optional error message if this is a failure transition.</param>
-        /// <param name="metadata">Optional metadata object to serialize as JSON.</param>
         Task TransitionJobStatusAsync(
             UserJob job,
             JobStatus newStatus,

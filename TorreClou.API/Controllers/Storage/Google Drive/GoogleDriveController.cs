@@ -19,11 +19,11 @@ namespace TorreClou.API.Controllers.Storage
         [HttpPost("credentials")]
         public async Task<IActionResult> SaveCredentials([FromBody] SaveGoogleDriveCredentialsRequestDto request)
         {
-            var result = await googleDriveService.SaveCredentialsAsync(UserId, request);
-            return HandleResult(result, value => new SaveGoogleDriveCredentialsResponseDto
+            var value = await googleDriveService.SaveCredentialsAsync(UserId, request);
+            return Ok(new SaveGoogleDriveCredentialsResponseDto
             {
                 CredentialId = value.CredentialId,
-                Name = value.Name
+                Name = value.CredentialName
             });
         }
 
@@ -34,8 +34,7 @@ namespace TorreClou.API.Controllers.Storage
         [HttpGet("credentials")]
         public async Task<IActionResult> GetCredentials()
         {
-            var result = await googleDriveService.GetCredentialsAsync(UserId);
-            return HandleResult(result);
+            return Ok(await googleDriveService.GetCredentialsAsync(UserId));
         }
 
         /// <summary>
@@ -45,8 +44,8 @@ namespace TorreClou.API.Controllers.Storage
         [HttpPost("connect")]
         public async Task<IActionResult> Connect([FromBody] ConnectGoogleDriveRequestDto request)
         {
-            var result = await googleDriveService.ConnectAsync(UserId, request);
-            return HandleResult(result, url => new GoogleDriveAuthResponse { AuthorizationUrl = url });
+            var url = await googleDriveService.ConnectAsync(UserId, request);
+            return Ok(new GoogleDriveAuthResponse { AuthorizationUrl = url });
         }
 
         /// <summary>
@@ -56,8 +55,8 @@ namespace TorreClou.API.Controllers.Storage
         [HttpPost("{profileId:int}/reauthenticate")]
         public async Task<IActionResult> Reauthenticate(int profileId)
         {
-            var result = await googleDriveService.ReauthenticateAsync(UserId, profileId);
-            return HandleResult(result, url => new GoogleDriveAuthResponse { AuthorizationUrl = url });
+            var url = await googleDriveService.ReauthenticateAsync(UserId, profileId);
+            return Ok(new GoogleDriveAuthResponse { AuthorizationUrl = url });
         }
 
         /// <summary>
